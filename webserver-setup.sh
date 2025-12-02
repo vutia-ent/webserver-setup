@@ -148,33 +148,43 @@ get_domain_config() {
     echo ""
     echo -e "${BOLD}Domain Configuration:${NC}"
 
-    read -p "Enter domain name (e.g., example.com): " DOMAIN
+    read -p "Enter domain name (e.g., example.com or api.example.com): " DOMAIN
     while [ -z "$DOMAIN" ]; do
         echo "Domain cannot be empty."
         read -p "Enter domain name: " DOMAIN
     done
 
-    read -p "Include www subdomain? (y/n) [y]: " include_www
-    include_www=${include_www:-y}
-    if [[ $include_www =~ ^[Yy]$ ]]; then
-        INCLUDE_WWW=true
-        SERVER_ALIASES="www.$DOMAIN"
-    else
-        INCLUDE_WWW=false
-        SERVER_ALIASES=""
-    fi
+    # Check if domain already has a subdomain (contains more than one dot)
+    local dot_count=$(echo "$DOMAIN" | tr -cd '.' | wc -c)
+    SERVER_ALIASES=""
 
-    read -p "Add additional subdomains? (comma-separated, or leave empty): " extra_subdomains
-    if [ -n "$extra_subdomains" ]; then
-        IFS=',' read -ra SUBDOMAINS <<< "$extra_subdomains"
-        for sub in "${SUBDOMAINS[@]}"; do
-            sub=$(echo "$sub" | xargs)  # trim whitespace
-            if [ -n "$SERVER_ALIASES" ]; then
-                SERVER_ALIASES="$SERVER_ALIASES ${sub}.${DOMAIN}"
-            else
-                SERVER_ALIASES="${sub}.${DOMAIN}"
-            fi
-        done
+    if [ "$dot_count" -eq 1 ]; then
+        # Root domain like example.com - offer www
+        read -p "Include www subdomain? (y/n) [y]: " include_www
+        include_www=${include_www:-y}
+        if [[ $include_www =~ ^[Yy]$ ]]; then
+            INCLUDE_WWW=true
+            SERVER_ALIASES="www.$DOMAIN"
+        else
+            INCLUDE_WWW=false
+        fi
+
+        read -p "Add additional subdomains? (comma-separated, or leave empty): " extra_subdomains
+        if [ -n "$extra_subdomains" ]; then
+            IFS=',' read -ra SUBDOMAINS <<< "$extra_subdomains"
+            for sub in "${SUBDOMAINS[@]}"; do
+                sub=$(echo "$sub" | xargs)  # trim whitespace
+                if [ -n "$SERVER_ALIASES" ]; then
+                    SERVER_ALIASES="$SERVER_ALIASES ${sub}.${DOMAIN}"
+                else
+                    SERVER_ALIASES="${sub}.${DOMAIN}"
+                fi
+            done
+        fi
+    else
+        # Already a subdomain like api.example.com - skip www question
+        INCLUDE_WWW=false
+        log_info "Subdomain detected - skipping www alias"
     fi
 
     log_info "Domain: $DOMAIN"
@@ -534,12 +544,16 @@ setup_python_app() {
 
     # Install dependencies
     if [ -f "requirements.txt" ]; then
-        log_info "Installing Python dependencies..."
+        log_info "Installing Python dependencies (this may take a while)..."
         source venv/bin/activate
-        pip install --upgrade pip >/dev/null 2>&1
-        pip install -r requirements.txt >/dev/null 2>&1
+        pip install --upgrade pip 2>&1 | tail -1
+        if pip install -r requirements.txt 2>&1 | tee /tmp/pip_install.log | tail -5; then
+            log_success "Python dependencies installed"
+        else
+            log_error "Failed to install some dependencies. Check /tmp/pip_install.log"
+            cat /tmp/pip_install.log | grep -i "error" | head -5
+        fi
         deactivate
-        log_success "Python dependencies installed"
     else
         log_warning "No requirements.txt found"
     fi
@@ -585,8 +599,8 @@ module.exports = {
   apps: [{
     name: '$PM2_APP_NAME',
     cwd: '$APP_ROOT',
-    script: 'venv/bin/python',
-    args: '-m $PM2_START_CMD',
+    script: 'venv/bin/uvicorn',
+    args: 'app.main:app --host 127.0.0.1 --port $APP_PORT',
     instances: 1,
     autorestart: true,
     watch: false,
