@@ -192,7 +192,9 @@ get_domain_config() {
     esac
 
     log_info "Domain: $DOMAIN"
-    [ -n "$SERVER_ALIASES" ] && log_info "Aliases: $SERVER_ALIASES"
+    if [ -n "$SERVER_ALIASES" ]; then
+        log_info "Aliases: $SERVER_ALIASES"
+    fi
 }
 
 # Get app directory
