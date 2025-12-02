@@ -210,8 +210,8 @@ backup_item() {
 select_web_server() {
     echo ""
     echo -e "${BOLD}Select Web Server:${NC}"
-    echo "  1) Apache2  ${DIM}(feature-rich, .htaccess support)${NC}"
-    echo "  2) Nginx    ${DIM}(high performance, modern)${NC}"
+    echo -e "  1) Apache2  ${DIM}(feature-rich, .htaccess support)${NC}"
+    echo -e "  2) Nginx    ${DIM}(high performance, modern)${NC}"
     echo ""
 
     while true; do
@@ -230,11 +230,11 @@ select_web_server() {
 select_app_type() {
     echo ""
     echo -e "${BOLD}Select Application Type:${NC}"
-    echo "  1) Node.js  ${DIM}(Next.js, Express, NestJS, etc.)${NC}"
-    echo "  2) Python   ${DIM}(FastAPI, Django, Flask)${NC}"
-    echo "  3) PHP      ${DIM}(Laravel, WordPress, Symfony)${NC}"
-    echo "  4) Static   ${DIM}(HTML, CSS, JS, React build)${NC}"
-    echo "  5) Proxy    ${DIM}(reverse proxy to existing app)${NC}"
+    echo -e "  1) Node.js  ${DIM}(Next.js, Express, NestJS, etc.)${NC}"
+    echo -e "  2) Python   ${DIM}(FastAPI, Django, Flask)${NC}"
+    echo -e "  3) PHP      ${DIM}(Laravel, WordPress, Symfony)${NC}"
+    echo -e "  4) Static   ${DIM}(HTML, CSS, JS, React build)${NC}"
+    echo -e "  5) Proxy    ${DIM}(reverse proxy to existing app)${NC}"
     echo ""
 
     while true; do
@@ -401,10 +401,10 @@ get_git_config() {
 get_ssl_config() {
     echo ""
     echo -e "${BOLD}SSL/TLS Configuration:${NC}"
-    echo "  1) Let's Encrypt  ${DIM}(free, auto-renewal, recommended)${NC}"
-    echo "  2) Self-signed    ${DIM}(for testing/development)${NC}"
-    echo "  3) No SSL         ${DIM}(HTTP only - not recommended)${NC}"
-    echo "  4) Existing cert  ${DIM}(provide certificate paths)${NC}"
+    echo -e "  1) Let's Encrypt  ${DIM}(free, auto-renewal, recommended)${NC}"
+    echo -e "  2) Self-signed    ${DIM}(for testing/development)${NC}"
+    echo -e "  3) No SSL         ${DIM}(HTTP only - not recommended)${NC}"
+    echo -e "  4) Existing cert  ${DIM}(provide certificate paths)${NC}"
     echo ""
 
     while true; do
@@ -453,9 +453,9 @@ get_pm_config() {
 
     echo ""
     echo -e "${BOLD}Process Manager:${NC}"
-    echo "  1) PM2       ${DIM}(recommended, easy management)${NC}"
-    echo "  2) Systemd   ${DIM}(native, no extra dependencies)${NC}"
-    echo "  3) None      ${DIM}(manual process management)${NC}"
+    echo -e "  1) PM2       ${DIM}(recommended, easy management)${NC}"
+    echo -e "  2) Systemd   ${DIM}(native, no extra dependencies)${NC}"
+    echo -e "  3) None      ${DIM}(manual process management)${NC}"
     echo ""
 
     while true; do
