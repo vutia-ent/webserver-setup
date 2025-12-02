@@ -195,10 +195,12 @@ get_domain_config() {
     if [ -n "$SERVER_ALIASES" ]; then
         log_info "Aliases: $SERVER_ALIASES"
     fi
+    echo "DEBUG: get_domain_config completed successfully"
 }
 
 # Get app directory
 get_app_directory() {
+    echo "DEBUG: get_app_directory starting"
     echo ""
     echo -e "${BOLD}Application Directory:${NC}"
 
@@ -1179,6 +1181,7 @@ main() {
     select_web_server
     select_app_type
     get_domain_config
+    echo "DEBUG: main() - after get_domain_config, before get_app_directory"
     get_app_directory
     get_port_config
     get_git_config
