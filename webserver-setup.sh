@@ -154,38 +154,42 @@ get_domain_config() {
         read -p "Enter domain name: " DOMAIN
     done
 
-    # Check if domain already has a subdomain (contains more than one dot)
-    local dot_count=$(echo "$DOMAIN" | tr -cd '.' | wc -c)
+    # Check if domain already has a subdomain (e.g., api.example.com has 2 dots worth of parts)
     SERVER_ALIASES=""
+    INCLUDE_WWW=false
 
-    if [ "$dot_count" -eq 1 ]; then
-        # Root domain like example.com - offer www
-        read -p "Include www subdomain? (y/n) [y]: " include_www
-        include_www=${include_www:-y}
-        if [[ $include_www =~ ^[Yy]$ ]]; then
-            INCLUDE_WWW=true
-            SERVER_ALIASES="www.$DOMAIN"
-        else
-            INCLUDE_WWW=false
-        fi
+    # Count dots: example.com = 1 dot, api.example.com = 2 dots
+    case "$DOMAIN" in
+        *.*.*)
+            # Already a subdomain like api.example.com - skip www question
+            log_info "Subdomain detected - skipping www alias"
+            ;;
+        *.*)
+            # Root domain like example.com - offer www
+            read -p "Include www subdomain? (y/n) [y]: " include_www
+            include_www=${include_www:-y}
+            if [[ $include_www =~ ^[Yy]$ ]]; then
+                INCLUDE_WWW=true
+                SERVER_ALIASES="www.$DOMAIN"
+            fi
 
-        read -p "Add additional subdomains? (comma-separated, or leave empty): " extra_subdomains
-        if [ -n "$extra_subdomains" ]; then
-            IFS=',' read -ra SUBDOMAINS <<< "$extra_subdomains"
-            for sub in "${SUBDOMAINS[@]}"; do
-                sub=$(echo "$sub" | xargs)  # trim whitespace
-                if [ -n "$SERVER_ALIASES" ]; then
-                    SERVER_ALIASES="$SERVER_ALIASES ${sub}.${DOMAIN}"
-                else
-                    SERVER_ALIASES="${sub}.${DOMAIN}"
-                fi
-            done
-        fi
-    else
-        # Already a subdomain like api.example.com - skip www question
-        INCLUDE_WWW=false
-        log_info "Subdomain detected - skipping www alias"
-    fi
+            read -p "Add additional subdomains? (comma-separated, or leave empty): " extra_subdomains
+            if [ -n "$extra_subdomains" ]; then
+                IFS=',' read -ra SUBDOMAINS <<< "$extra_subdomains"
+                for sub in "${SUBDOMAINS[@]}"; do
+                    sub=$(echo "$sub" | xargs)  # trim whitespace
+                    if [ -n "$SERVER_ALIASES" ]; then
+                        SERVER_ALIASES="$SERVER_ALIASES ${sub}.${DOMAIN}"
+                    else
+                        SERVER_ALIASES="${sub}.${DOMAIN}"
+                    fi
+                done
+            fi
+            ;;
+        *)
+            log_warning "Invalid domain format. Please use format like example.com"
+            ;;
+    esac
 
     log_info "Domain: $DOMAIN"
     [ -n "$SERVER_ALIASES" ] && log_info "Aliases: $SERVER_ALIASES"
