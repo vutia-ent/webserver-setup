@@ -195,12 +195,10 @@ get_domain_config() {
     if [ -n "$SERVER_ALIASES" ]; then
         log_info "Aliases: $SERVER_ALIASES"
     fi
-    echo "DEBUG: get_domain_config completed successfully"
 }
 
 # Get app directory
 get_app_directory() {
-    echo "DEBUG: get_app_directory starting"
     echo ""
     echo -e "${BOLD}Application Directory:${NC}"
 
@@ -436,6 +434,13 @@ install_python() {
     install_package "python3"
     install_package "python3-venv"
     install_package "python3-pip"
+    install_package "python3-dev"
+    install_package "build-essential"
+
+    # Install database development libraries for Python packages
+    install_package "libpq-dev"           # PostgreSQL
+    install_package "default-libmysqlclient-dev"  # MySQL
+    install_package "pkg-config"          # Required for mysqlclient
 
     log_success "Python $(python3 --version | cut -d ' ' -f 2) ready"
 
@@ -551,20 +556,28 @@ setup_python_app() {
     fi
 
     # Install dependencies
+    source venv/bin/activate
+
+    log_info "Upgrading pip..."
+    pip install --upgrade pip 2>&1 | tail -1
+
+    # Ensure uvicorn is installed (required for FastAPI/Starlette apps)
+    log_info "Installing uvicorn..."
+    pip install uvicorn 2>&1 | tail -1
+
     if [ -f "requirements.txt" ]; then
         log_info "Installing Python dependencies (this may take a while)..."
-        source venv/bin/activate
-        pip install --upgrade pip 2>&1 | tail -1
         if pip install -r requirements.txt 2>&1 | tee /tmp/pip_install.log | tail -5; then
             log_success "Python dependencies installed"
         else
-            log_error "Failed to install some dependencies. Check /tmp/pip_install.log"
-            cat /tmp/pip_install.log | grep -i "error" | head -5
+            log_warning "Some dependencies may have failed. Check /tmp/pip_install.log"
+            grep -i "error\|failed" /tmp/pip_install.log | head -5 || true
         fi
-        deactivate
     else
         log_warning "No requirements.txt found"
     fi
+
+    deactivate
 
     chown -R www-data:www-data "$APP_ROOT"
 }
@@ -602,13 +615,18 @@ module.exports = {
 };
 EOF
     elif [ "$APP_TYPE" == "python" ]; then
+        # Parse the start command - extract first word as script, rest as args
+        local py_script=$(echo "$PM2_START_CMD" | awk '{print $1}')
+        local py_args=$(echo "$PM2_START_CMD" | cut -d' ' -f2-)
+
         cat > ecosystem.config.js << EOF
 module.exports = {
   apps: [{
     name: '$PM2_APP_NAME',
     cwd: '$APP_ROOT',
-    script: 'venv/bin/uvicorn',
-    args: 'app.main:app --host 127.0.0.1 --port $APP_PORT',
+    script: 'venv/bin/$py_script',
+    args: '$py_args',
+    interpreter: 'none',
     instances: 1,
     autorestart: true,
     watch: false,
@@ -1181,7 +1199,6 @@ main() {
     select_web_server
     select_app_type
     get_domain_config
-    echo "DEBUG: main() - after get_domain_config, before get_app_directory"
     get_app_directory
     get_port_config
     get_git_config
