@@ -21,7 +21,7 @@ A comprehensive, interactive bash script for setting up web applications on Ubun
 
 ```bash
 # Download the script
-curl -O https://raw.githubusercontent.com/yourusername/webserver-setup/main/webserver-setup.sh
+curl -O https://raw.githubusercontent.com/vutia-ent/webserver-setup/main/webserver-setup.sh
 
 # Make executable
 chmod +x webserver-setup.sh
