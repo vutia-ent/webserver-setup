@@ -1,19 +1,29 @@
-# Universal Web Server Setup Script
+# Universal Web Server Setup Script v2.0
 
-A comprehensive, interactive bash script for setting up web applications on Ubuntu/Debian servers with Apache2 or Nginx.
+A comprehensive, production-ready bash script for setting up web applications on Ubuntu/Debian servers with Apache2 or Nginx.
 
 ## Features
 
+### Core Features
 - **Web Server Support**: Apache2 or Nginx (auto-installs if missing)
 - **Application Types**: Node.js, Python, PHP, Static files, or reverse proxy
-- **SSL/TLS**: Let's Encrypt, self-signed, or existing certificates
-- **Process Management**: PM2 for Node.js and Python applications
+- **SSL/TLS**: Let's Encrypt (auto-renewal), self-signed, or existing certificates
+- **Process Management**: PM2 or Systemd for Node.js and Python applications
 - **Git Integration**: Clone repositories during setup
-- **Helper Scripts**: Auto-generated update, restart, logs, and status scripts
+
+### New in v2.0
+- **Database Setup**: Optional MySQL/MariaDB or PostgreSQL installation
+- **UFW Firewall**: Automatic firewall configuration
+- **Systemd Support**: Alternative to PM2 for process management
+- **Improved Logging**: Full installation log at `/var/log/webserver-setup.log`
+- **Automatic Backups**: Existing configs backed up before changes
+- **Better Error Handling**: Graceful error recovery with detailed messages
+- **Input Validation**: Domain, email, and URL validation
+- **Configuration Summary**: Review before installation begins
 
 ## Requirements
 
-- Ubuntu 20.04/22.04/24.04 or Debian 10/11/12
+- Ubuntu 20.04/22.04/24.04/25.04 or Debian 10/11/12
 - Root or sudo access
 - Domain name pointed to your server IP (for SSL)
 
@@ -30,90 +40,106 @@ chmod +x webserver-setup.sh
 sudo ./webserver-setup.sh
 ```
 
-## Interactive Prompts
+## Interactive Configuration
 
-The script will ask you to configure:
-
-### 1. Web Server
+### 1. Web Server Selection
 ```
 Select Web Server:
-  1) Apache2
-  2) Nginx
+  1) Apache2  (feature-rich, .htaccess support)
+  2) Nginx    (high performance, modern)
 ```
 
 ### 2. Application Type
 ```
 Select Application Type:
-  1) Node.js (Next.js, Express, etc.)
-  2) Python (FastAPI, Django, Flask)
-  3) PHP (Laravel, WordPress, etc.)
-  4) Static Files (HTML, CSS, JS)
-  5) Reverse Proxy Only (app already running)
+  1) Node.js  (Next.js, Express, NestJS, etc.)
+  2) Python   (FastAPI, Django, Flask)
+  3) PHP      (Laravel, WordPress, Symfony)
+  4) Static   (HTML, CSS, JS, React build)
+  5) Proxy    (reverse proxy to existing app)
 ```
 
 ### 3. Domain Configuration
-- Main domain (e.g., `example.com`)
-- Include www subdomain (y/n)
-- Additional subdomains (e.g., `api, admin`)
+- Main domain with validation (e.g., `example.com`)
+- Optional www subdomain
+- Additional subdomains (comma-separated)
 
-### 4. Application Directory
-- Default: `/var/www/yourdomain.com`
+### 4. Application Settings
+- Application directory (default: `/var/www/yourdomain.com`)
+- Port configuration (Node.js: 3000, Python: 8000)
+- Git repository URL and branch
 
-### 5. Port Configuration
-- For Node.js: default 3000
-- For Python: default 8000
-- Not needed for PHP/static
+### 5. Process Manager
+```
+Process Manager:
+  1) PM2       (recommended, easy management)
+  2) Systemd   (native, no extra dependencies)
+  3) None      (manual process management)
+```
 
-### 6. Git Repository (Optional)
-- Repository URL
-- Branch name (default: main)
+### 6. Database Setup (Optional)
+```
+Database Setup (optional):
+  1) MySQL/MariaDB
+  2) PostgreSQL
+  3) None (skip database setup)
+```
 
-### 7. SSL/TLS Configuration
+### 7. Firewall Configuration
+- UFW firewall setup with SSH and web server rules
+
+### 8. SSL/TLS Configuration
 ```
 SSL/TLS Configuration:
-  1) Let's Encrypt (recommended for production)
-  2) Self-signed certificate (for testing)
-  3) No SSL (HTTP only)
-  4) Existing certificate (provide paths)
+  1) Let's Encrypt  (free, auto-renewal, recommended)
+  2) Self-signed    (for testing/development)
+  3) No SSL         (HTTP only - not recommended)
+  4) Existing cert  (provide certificate paths)
 ```
 
-### 8. Process Manager (Node.js/Python only)
-- Use PM2 for process management
-- Custom start command
-
 ## What Gets Installed
-
-Depending on your choices:
 
 | Component | Installed When |
 |-----------|---------------|
 | Apache2 | Selected as web server |
 | Nginx | Selected as web server |
-| Node.js 20 | App type is Node.js |
+| Node.js 20.x | App type is Node.js |
 | Python 3 + venv | App type is Python |
 | PHP + PHP-FPM | App type is PHP |
-| PM2 | Process management enabled |
+| PM2 | PM2 selected as process manager |
+| MySQL/MariaDB | Database option selected |
+| PostgreSQL | Database option selected |
+| UFW | Firewall option enabled |
 | Certbot | Let's Encrypt SSL selected |
 
-## Generated Configuration
+## Generated Configurations
 
-### Apache Virtual Host
+### Apache2 Features
 - Reverse proxy with WebSocket support
-- Security headers (X-Frame-Options, etc.)
+- Security headers (X-Content-Type-Options, X-Frame-Options, etc.)
 - Gzip compression
-- Static asset caching
+- Static asset caching with expires
+- HTTPS redirect
 
-### Nginx Server Block
-- Reverse proxy with WebSocket support
+### Nginx Features
+- Upstream backend with keepalive connections
+- WebSocket support via proxy headers
 - Security headers
 - Gzip compression
 - Static asset caching
+- HTTP/2 support for SSL
 
 ### PM2 Ecosystem
+- Cluster mode for Node.js (multi-instance)
 - Auto-restart on crash
-- Memory limit restart
-- Log file configuration
+- Memory limit restart (1GB default)
+- Log file configuration with timestamps
 - Startup script integration
+
+### Systemd Service
+- Auto-restart on failure
+- Log integration with journald
+- Proper user isolation (www-data)
 
 ## Helper Scripts
 
@@ -124,7 +150,7 @@ After setup, these scripts are created in your app directory:
 | `update.sh` | Pull latest code, install dependencies, rebuild, restart |
 | `restart.sh` | Restart application and web server |
 | `logs.sh` | View application and web server logs |
-| `status.sh` | Check service status |
+| `status.sh` | Check all service statuses |
 
 ### Usage Examples
 
@@ -144,40 +170,43 @@ sudo /var/www/example.com/restart.sh
 
 ## Examples
 
-### Example 1: Next.js Application
+### Example 1: Next.js with PM2
 
 ```
 Web Server: Nginx
 App Type: Node.js
 Domain: myapp.com (with www)
-Directory: /var/www/myapp.com
 Port: 3000
 Git: https://github.com/user/myapp.git
+Process Manager: PM2
+Database: None
+Firewall: Yes
 SSL: Let's Encrypt
-PM2: Yes
 ```
 
-### Example 2: FastAPI Backend
+### Example 2: FastAPI with Systemd
 
 ```
 Web Server: Apache2
 App Type: Python
 Domain: api.myapp.com
-Directory: /var/www/api.myapp.com
 Port: 8000
 Git: https://github.com/user/myapi.git
+Process Manager: Systemd
+Database: PostgreSQL
+Firewall: Yes
 SSL: Let's Encrypt
-PM2: Yes (uvicorn app.main:app --host 127.0.0.1 --port 8000)
 ```
 
-### Example 3: WordPress Site
+### Example 3: Laravel with MySQL
 
 ```
-Web Server: Apache2
+Web Server: Nginx
 App Type: PHP
-Domain: blog.example.com (with www)
-Directory: /var/www/blog.example.com
+Domain: blog.example.com
 Document Root: public
+Database: MySQL
+Firewall: Yes
 SSL: Let's Encrypt
 ```
 
@@ -187,42 +216,51 @@ SSL: Let's Encrypt
 Web Server: Nginx
 App Type: Static
 Domain: docs.example.com
-Directory: /var/www/docs.example.com
+Firewall: Yes
 SSL: Let's Encrypt
 ```
 
 ## Post-Setup Tasks
 
 ### For Python Applications
-Create your `.env` file:
 ```bash
+# Create .env file
 nano /var/www/yourdomain.com/.env
-```
 
-Run database migrations:
-```bash
+# Run database migrations
 cd /var/www/yourdomain.com
 source venv/bin/activate
 alembic upgrade head
 ```
 
 ### For Node.js Applications
-Configure environment:
 ```bash
+# Configure environment
 nano /var/www/yourdomain.com/.env.local
 ```
 
 ### For PHP Applications
-Set correct permissions:
 ```bash
+# Set correct permissions (Laravel)
 chown -R www-data:www-data /var/www/yourdomain.com
 chmod -R 755 /var/www/yourdomain.com
-chmod -R 775 /var/www/yourdomain.com/storage  # Laravel
+chmod -R 775 /var/www/yourdomain.com/storage
+```
+
+### For MySQL/MariaDB
+```bash
+# Secure the installation
+sudo mysql_secure_installation
 ```
 
 ## Troubleshooting
 
-### Check Web Server Status
+### Check Installation Log
+```bash
+cat /var/log/webserver-setup.log
+```
+
+### Web Server Status
 ```bash
 # Apache
 sudo systemctl status apache2
@@ -233,10 +271,15 @@ sudo systemctl status nginx
 sudo nginx -t
 ```
 
-### Check Application Status
+### Application Status
 ```bash
+# PM2
 pm2 status
 pm2 logs your-app-name
+
+# Systemd
+systemctl status your-app-name
+journalctl -u your-app-name -f
 ```
 
 ### View Error Logs
@@ -270,6 +313,11 @@ sudo netstat -tlnp | grep 3000
 sudo kill -9 <PID>
 ```
 
+### Firewall Status
+```bash
+sudo ufw status verbose
+```
+
 ## Uninstall
 
 To remove a site configuration:
@@ -278,6 +326,7 @@ To remove a site configuration:
 # Apache
 sudo a2dissite yourdomain.com.conf
 sudo rm /etc/apache2/sites-available/yourdomain.com.conf
+sudo rm /etc/apache2/sites-available/yourdomain.com-ssl.conf
 sudo systemctl reload apache2
 
 # Nginx
@@ -288,18 +337,61 @@ sudo systemctl reload nginx
 # PM2
 pm2 delete your-app-name
 pm2 save
+
+# Systemd
+sudo systemctl stop your-app-name
+sudo systemctl disable your-app-name
+sudo rm /etc/systemd/system/your-app-name.service
+sudo systemctl daemon-reload
 ```
 
-## Security Recommendations
+## Backups
 
+The script automatically backs up existing configurations to:
+```
+/var/backups/webserver-setup/YYYYMMDD_HHMMSS/
+```
+
+## Security Features
+
+### Automatic Security Headers
+- X-Content-Type-Options: nosniff
+- X-Frame-Options: SAMEORIGIN
+- X-XSS-Protection: 1; mode=block
+- Referrer-Policy: strict-origin-when-cross-origin
+- Strict-Transport-Security (HSTS) for SSL
+
+### Firewall Rules
+- Default deny incoming
+- Allow SSH (port 22)
+- Allow HTTP (port 80)
+- Allow HTTPS (port 443)
+
+### Additional Recommendations
 - [ ] Keep system packages updated: `sudo apt update && sudo apt upgrade`
-- [ ] Configure firewall: `sudo ufw allow 'Nginx Full'` or `sudo ufw allow 'Apache Full'`
 - [ ] Enable fail2ban: `sudo apt install fail2ban`
 - [ ] Set up automated backups
 - [ ] Use strong database passwords
-- [ ] Keep SSL certificates valid (auto-renewed with Let's Encrypt)
 - [ ] Review and restrict CORS settings
 - [ ] Don't expose .env files publicly
+
+## Changelog
+
+### v2.0.0
+- Added Systemd as alternative to PM2
+- Added database installation (MySQL/PostgreSQL)
+- Added UFW firewall configuration
+- Added comprehensive logging
+- Added automatic backups
+- Improved error handling
+- Added input validation
+- Added configuration summary before install
+- Fixed package installation reliability
+- Fixed PM2 Python configuration
+- Improved SSL setup for existing certificates
+
+### v1.0.0
+- Initial release
 
 ## License
 
@@ -307,4 +399,5 @@ MIT License - Feel free to use and modify.
 
 ## Contributing
 
-Contributions welcome! Please submit issues and pull requests.
+Contributions welcome! Please submit issues and pull requests at:
+https://github.com/vutia-ent/webserver-setup

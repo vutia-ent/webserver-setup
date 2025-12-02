@@ -1,15 +1,18 @@
 #!/bin/bash
 
 # ============================================================================
-# Universal Web Server Setup Script
+# Universal Web Server Setup Script v2.0
 # ============================================================================
-# A comprehensive tool for setting up web applications with:
+# A comprehensive, production-ready tool for setting up web applications with:
 # - Apache2 or Nginx (auto-install if missing)
-# - Reverse proxy configuration
-# - Static file serving
-# - SSL/TLS with Let's Encrypt or self-signed
+# - Reverse proxy configuration with WebSocket support
+# - Static file serving with caching
+# - SSL/TLS with Let's Encrypt, self-signed, or existing certificates
 # - Multiple app support (Node.js, Python, PHP, static)
-# - PM2 process management for Node.js/Python apps
+# - PM2 or systemd process management
+# - UFW firewall configuration
+# - Database installation (MySQL/PostgreSQL)
+# - Automatic security hardening
 #
 # Usage:
 #   chmod +x webserver-setup.sh
@@ -17,9 +20,10 @@
 #
 # ============================================================================
 
-set -e
+VERSION="2.0.0"
 
-VERSION="1.0.0"
+# Exit on error, but handle gracefully
+set -o pipefail
 
 # Colors
 RED='\033[0;31m'
@@ -29,24 +33,86 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
-# Logging functions
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_step() { echo -e "${MAGENTA}[STEP]${NC} $1"; }
+# Global variables
+LOG_FILE="/var/log/webserver-setup.log"
+BACKUP_DIR="/var/backups/webserver-setup"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+# ============================================================================
+# LOGGING & UTILITY FUNCTIONS
+# ============================================================================
+
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_success() {
+    echo -e "${GREEN}[OK]${NC} $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [OK] $1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_warning() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] $1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_step() {
+    echo -e "${MAGENTA}[STEP]${NC} $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STEP] $1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_debug() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [DEBUG] $1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# Error handler
+error_handler() {
+    local line_no=$1
+    local error_code=$2
+    log_error "Error occurred in script at line $line_no (exit code: $error_code)"
+    log_error "Check log file for details: $LOG_FILE"
+    echo ""
+    echo -e "${RED}Setup failed. Please check the error above and try again.${NC}"
+    exit 1
+}
+
+trap 'error_handler ${LINENO} $?' ERR
+
+# Spinner for long operations
+spinner() {
+    local pid=$1
+    local msg=$2
+    local spin='-\|/'
+    local i=0
+
+    while kill -0 $pid 2>/dev/null; do
+        i=$(( (i+1) % 4 ))
+        printf "\r${BLUE}[INFO]${NC} ${msg} ${spin:$i:1}"
+        sleep 0.1
+    done
+    printf "\r"
+}
 
 # Header
 print_header() {
     clear
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════════════════════════════╗"
-    echo "║                  Universal Web Server Setup v${VERSION}                  ║"
-    echo "║                   Apache2 • Nginx • SSL • Proxy                      ║"
+    echo "║          Universal Web Server Setup v${VERSION}                        ║"
+    echo "║           Apache2 • Nginx • SSL • PM2 • Firewall                     ║"
     echo "╚══════════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
+    echo -e "${DIM}Log file: $LOG_FILE${NC}"
+    echo ""
 }
 
 # Check if running as root
@@ -56,6 +122,12 @@ check_root() {
         echo "Please run: sudo $0"
         exit 1
     fi
+
+    # Initialize log file
+    mkdir -p "$(dirname "$LOG_FILE")"
+    touch "$LOG_FILE"
+    chmod 644 "$LOG_FILE"
+    echo "=== Web Server Setup Started at $(date) ===" >> "$LOG_FILE"
 }
 
 # Detect OS
@@ -64,16 +136,22 @@ detect_os() {
         . /etc/os-release
         OS=$ID
         OS_VERSION=$VERSION_ID
+        OS_CODENAME=${VERSION_CODENAME:-$(echo $VERSION | grep -oP '\(\K[^)]+' || echo "unknown")}
     else
         log_error "Cannot detect OS. This script supports Ubuntu/Debian."
         exit 1
     fi
 
-    if [[ "$OS" != "ubuntu" && "$OS" != "debian" ]]; then
-        log_warning "This script is optimized for Ubuntu/Debian. Proceeding anyway..."
-    fi
+    case "$OS" in
+        ubuntu|debian)
+            log_info "Detected OS: $OS $OS_VERSION ($OS_CODENAME)"
+            ;;
+        *)
+            log_warning "This script is optimized for Ubuntu/Debian. Proceeding with caution..."
+            ;;
+    esac
 
-    log_info "Detected OS: $OS $OS_VERSION"
+    log_debug "OS: $OS, Version: $OS_VERSION, Codename: $OS_CODENAME"
 }
 
 # Check if command exists
@@ -81,18 +159,46 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
-# Install package if not installed
+# Check if package is installed (reliable method)
+package_installed() {
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
+}
+
+# Install package with error handling
 install_package() {
     local pkg=$1
-    if ! dpkg -l | grep -q "^ii  $pkg "; then
-        log_info "Installing $pkg..."
-        if apt-get install -y "$pkg" >/dev/null 2>&1; then
-            log_success "$pkg installed"
-        else
-            log_warning "$pkg failed to install (may not be available)"
-        fi
-    else
+    local optional=${2:-false}
+
+    if package_installed "$pkg"; then
         log_success "$pkg already installed"
+        return 0
+    fi
+
+    log_info "Installing $pkg..."
+    log_debug "Running: apt-get install -y $pkg"
+
+    if apt-get install -y "$pkg" >> "$LOG_FILE" 2>&1; then
+        log_success "$pkg installed"
+        return 0
+    else
+        if [ "$optional" = true ]; then
+            log_warning "$pkg failed to install (optional package)"
+            return 0
+        else
+            log_error "$pkg failed to install"
+            return 1
+        fi
+    fi
+}
+
+# Backup file or directory
+backup_item() {
+    local item=$1
+    if [ -e "$item" ]; then
+        mkdir -p "$BACKUP_DIR/$TIMESTAMP"
+        local backup_path="$BACKUP_DIR/$TIMESTAMP/$(basename "$item")"
+        cp -r "$item" "$backup_path"
+        log_debug "Backed up $item to $backup_path"
     fi
 }
 
@@ -104,8 +210,8 @@ install_package() {
 select_web_server() {
     echo ""
     echo -e "${BOLD}Select Web Server:${NC}"
-    echo "  1) Apache2"
-    echo "  2) Nginx"
+    echo "  1) Apache2  ${DIM}(feature-rich, .htaccess support)${NC}"
+    echo "  2) Nginx    ${DIM}(high performance, modern)${NC}"
     echo ""
 
     while true; do
@@ -124,11 +230,11 @@ select_web_server() {
 select_app_type() {
     echo ""
     echo -e "${BOLD}Select Application Type:${NC}"
-    echo "  1) Node.js (Next.js, Express, etc.)"
-    echo "  2) Python (FastAPI, Django, Flask)"
-    echo "  3) PHP (Laravel, WordPress, etc.)"
-    echo "  4) Static Files (HTML, CSS, JS)"
-    echo "  5) Reverse Proxy Only (app already running)"
+    echo "  1) Node.js  ${DIM}(Next.js, Express, NestJS, etc.)${NC}"
+    echo "  2) Python   ${DIM}(FastAPI, Django, Flask)${NC}"
+    echo "  3) PHP      ${DIM}(Laravel, WordPress, Symfony)${NC}"
+    echo "  4) Static   ${DIM}(HTML, CSS, JS, React build)${NC}"
+    echo "  5) Proxy    ${DIM}(reverse proxy to existing app)${NC}"
     echo ""
 
     while true; do
@@ -151,48 +257,52 @@ get_domain_config() {
     echo ""
     echo -e "${BOLD}Domain Configuration:${NC}"
 
-    read -p "Enter domain name (e.g., example.com or api.example.com): " DOMAIN
-    while [ -z "$DOMAIN" ]; do
-        echo "Domain cannot be empty."
-        read -p "Enter domain name: " DOMAIN
+    while true; do
+        read -p "Enter domain name (e.g., example.com or api.example.com): " DOMAIN
+        if [ -n "$DOMAIN" ]; then
+            # Basic domain validation
+            if [[ "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$ ]]; then
+                break
+            else
+                echo "Invalid domain format. Please use format like example.com or api.example.com"
+            fi
+        else
+            echo "Domain cannot be empty."
+        fi
     done
 
-    # Check if domain already has a subdomain (e.g., api.example.com has 2 dots worth of parts)
     SERVER_ALIASES=""
     INCLUDE_WWW=false
 
-    # Count dots: example.com = 1 dot, api.example.com = 2 dots
-    case "$DOMAIN" in
-        *.*.*)
-            # Already a subdomain like api.example.com - skip www question
-            log_info "Subdomain detected - skipping www alias"
-            ;;
-        *.*)
-            # Root domain like example.com - offer www
-            read -p "Include www subdomain? (y/n) [y]: " include_www
-            include_www=${include_www:-y}
-            if [[ $include_www =~ ^[Yy]$ ]]; then
-                INCLUDE_WWW=true
-                SERVER_ALIASES="www.$DOMAIN"
-            fi
+    # Count dots to determine if subdomain
+    local dot_count=$(echo "$DOMAIN" | tr -cd '.' | wc -c | tr -d ' ')
 
-            read -p "Add additional subdomains? (comma-separated, or leave empty): " extra_subdomains
-            if [ -n "$extra_subdomains" ]; then
-                IFS=',' read -ra SUBDOMAINS <<< "$extra_subdomains"
-                for sub in "${SUBDOMAINS[@]}"; do
-                    sub=$(echo "$sub" | xargs)  # trim whitespace
+    if [ "$dot_count" -eq 1 ]; then
+        # Root domain like example.com - offer www
+        read -p "Include www subdomain? (y/n) [y]: " include_www
+        include_www=${include_www:-y}
+        if [[ $include_www =~ ^[Yy]$ ]]; then
+            INCLUDE_WWW=true
+            SERVER_ALIASES="www.$DOMAIN"
+        fi
+
+        read -p "Add additional subdomains? (comma-separated, or leave empty): " extra_subdomains
+        if [ -n "$extra_subdomains" ]; then
+            IFS=',' read -ra SUBDOMAINS <<< "$extra_subdomains"
+            for sub in "${SUBDOMAINS[@]}"; do
+                sub=$(echo "$sub" | xargs)  # trim whitespace
+                if [ -n "$sub" ]; then
                     if [ -n "$SERVER_ALIASES" ]; then
                         SERVER_ALIASES="$SERVER_ALIASES ${sub}.${DOMAIN}"
                     else
                         SERVER_ALIASES="${sub}.${DOMAIN}"
                     fi
-                done
-            fi
-            ;;
-        *)
-            log_warning "Invalid domain format. Please use format like example.com"
-            ;;
-    esac
+                fi
+            done
+        fi
+    else
+        log_info "Subdomain detected - skipping www alias"
+    fi
 
     log_info "Domain: $DOMAIN"
     if [ -n "$SERVER_ALIASES" ]; then
@@ -205,9 +315,12 @@ get_app_directory() {
     echo ""
     echo -e "${BOLD}Application Directory:${NC}"
 
-    default_dir="/var/www/$DOMAIN"
+    local default_dir="/var/www/$DOMAIN"
     read -p "Enter app root directory [$default_dir]: " APP_ROOT
     APP_ROOT=${APP_ROOT:-$default_dir}
+
+    # Normalize path (remove trailing slash)
+    APP_ROOT="${APP_ROOT%/}"
 
     log_info "App directory: $APP_ROOT"
 }
@@ -233,14 +346,17 @@ get_port_config() {
         *) default_port=3000;;
     esac
 
-    read -p "Enter application port [$default_port]: " APP_PORT
-    APP_PORT=${APP_PORT:-$default_port}
+    while true; do
+        read -p "Enter application port [$default_port]: " APP_PORT
+        APP_PORT=${APP_PORT:-$default_port}
 
-    # Validate port
-    if ! [[ "$APP_PORT" =~ ^[0-9]+$ ]] || [ "$APP_PORT" -lt 1 ] || [ "$APP_PORT" -gt 65535 ]; then
-        log_error "Invalid port number. Using default: $default_port"
-        APP_PORT=$default_port
-    fi
+        # Validate port
+        if [[ "$APP_PORT" =~ ^[0-9]+$ ]] && [ "$APP_PORT" -ge 1 ] && [ "$APP_PORT" -le 65535 ]; then
+            break
+        else
+            echo "Invalid port number. Please enter a number between 1 and 65535."
+        fi
+    done
 
     log_info "Application port: $APP_PORT"
 }
@@ -255,10 +371,19 @@ get_git_config() {
 
     if [[ $use_git =~ ^[Yy]$ ]]; then
         USE_GIT=true
-        read -p "Enter Git repository URL: " GIT_REPO
-        while [ -z "$GIT_REPO" ]; do
-            echo "Repository URL cannot be empty."
+
+        while true; do
             read -p "Enter Git repository URL: " GIT_REPO
+            if [ -n "$GIT_REPO" ]; then
+                # Basic URL validation
+                if [[ "$GIT_REPO" =~ ^(https?://|git@) ]]; then
+                    break
+                else
+                    echo "Invalid repository URL. Use https:// or git@ format."
+                fi
+            else
+                echo "Repository URL cannot be empty."
+            fi
         done
 
         read -p "Enter branch name [main]: " GIT_BRANCH
@@ -276,10 +401,10 @@ get_git_config() {
 get_ssl_config() {
     echo ""
     echo -e "${BOLD}SSL/TLS Configuration:${NC}"
-    echo "  1) Let's Encrypt (recommended for production)"
-    echo "  2) Self-signed certificate (for testing)"
-    echo "  3) No SSL (HTTP only)"
-    echo "  4) Existing certificate (provide paths)"
+    echo "  1) Let's Encrypt  ${DIM}(free, auto-renewal, recommended)${NC}"
+    echo "  2) Self-signed    ${DIM}(for testing/development)${NC}"
+    echo "  3) No SSL         ${DIM}(HTTP only - not recommended)${NC}"
+    echo "  4) Existing cert  ${DIM}(provide certificate paths)${NC}"
     echo ""
 
     while true; do
@@ -294,14 +419,25 @@ get_ssl_config() {
     done
 
     if [ "$SSL_TYPE" == "letsencrypt" ]; then
-        read -p "Enter email for Let's Encrypt notifications: " SSL_EMAIL
-        while [ -z "$SSL_EMAIL" ]; do
-            echo "Email is required for Let's Encrypt."
-            read -p "Enter email: " SSL_EMAIL
+        while true; do
+            read -p "Enter email for Let's Encrypt notifications: " SSL_EMAIL
+            if [[ "$SSL_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+                break
+            else
+                echo "Please enter a valid email address."
+            fi
         done
     elif [ "$SSL_TYPE" == "existing" ]; then
-        read -p "Enter path to SSL certificate: " SSL_CERT_PATH
-        read -p "Enter path to SSL private key: " SSL_KEY_PATH
+        while true; do
+            read -p "Enter path to SSL certificate: " SSL_CERT_PATH
+            read -p "Enter path to SSL private key: " SSL_KEY_PATH
+
+            if [ -f "$SSL_CERT_PATH" ] && [ -f "$SSL_KEY_PATH" ]; then
+                break
+            else
+                echo "Certificate or key file not found. Please check the paths."
+            fi
+        done
     fi
 
     log_info "SSL type: $SSL_TYPE"
@@ -311,31 +447,45 @@ get_ssl_config() {
 get_pm_config() {
     if [[ "$APP_TYPE" != "nodejs" && "$APP_TYPE" != "python" ]]; then
         USE_PM2=false
+        USE_SYSTEMD=false
         return
     fi
 
     echo ""
     echo -e "${BOLD}Process Manager:${NC}"
-    read -p "Use PM2 for process management? (y/n) [y]: " use_pm2
-    use_pm2=${use_pm2:-y}
+    echo "  1) PM2       ${DIM}(recommended, easy management)${NC}"
+    echo "  2) Systemd   ${DIM}(native, no extra dependencies)${NC}"
+    echo "  3) None      ${DIM}(manual process management)${NC}"
+    echo ""
 
-    if [[ $use_pm2 =~ ^[Yy]$ ]]; then
-        USE_PM2=true
+    while true; do
+        read -p "Enter choice [1-3] [1]: " pm_choice
+        pm_choice=${pm_choice:-1}
+        case $pm_choice in
+            1) USE_PM2=true; USE_SYSTEMD=false; break;;
+            2) USE_PM2=false; USE_SYSTEMD=true; break;;
+            3) USE_PM2=false; USE_SYSTEMD=false; break;;
+            *) echo "Invalid choice. Please enter 1-3.";;
+        esac
+    done
 
-        read -p "Enter app name for PM2 [$DOMAIN]: " PM2_APP_NAME
+    if [ "$USE_PM2" = true ] || [ "$USE_SYSTEMD" = true ]; then
+        read -p "Enter app name [$DOMAIN]: " PM2_APP_NAME
         PM2_APP_NAME=${PM2_APP_NAME:-$DOMAIN}
+        # Sanitize app name for systemd (replace dots with dashes)
+        SYSTEMD_APP_NAME=$(echo "$PM2_APP_NAME" | tr '.' '-')
 
         if [ "$APP_TYPE" == "nodejs" ]; then
-            read -p "Enter start command [npm start]: " PM2_START_CMD
-            PM2_START_CMD=${PM2_START_CMD:-"npm start"}
+            read -p "Enter start command [npm start]: " START_CMD
+            START_CMD=${START_CMD:-"npm start"}
         elif [ "$APP_TYPE" == "python" ]; then
-            read -p "Enter start command [uvicorn app.main:app --host 127.0.0.1 --port $APP_PORT]: " PM2_START_CMD
-            PM2_START_CMD=${PM2_START_CMD:-"uvicorn app.main:app --host 127.0.0.1 --port $APP_PORT"}
+            local default_cmd="uvicorn app.main:app --host 127.0.0.1 --port $APP_PORT"
+            read -p "Enter start command [$default_cmd]: " START_CMD
+            START_CMD=${START_CMD:-"$default_cmd"}
         fi
 
-        log_info "PM2 app name: $PM2_APP_NAME"
-    else
-        USE_PM2=false
+        log_info "Process manager: $([ "$USE_PM2" = true ] && echo "PM2" || echo "Systemd")"
+        log_info "App name: $PM2_APP_NAME"
     fi
 }
 
@@ -353,7 +503,7 @@ get_php_config() {
         PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2)
         log_info "Detected PHP version: $PHP_VERSION"
     else
-        PHP_VERSION="8.2"
+        PHP_VERSION="8.3"
         log_warning "PHP not detected. Will install PHP $PHP_VERSION"
     fi
 
@@ -365,6 +515,45 @@ get_php_config() {
     INSTALL_PHP_EXT=$([[ $install_ext =~ ^[Yy]$ ]] && echo true || echo false)
 }
 
+# Get database configuration
+get_database_config() {
+    echo ""
+    echo -e "${BOLD}Database Setup (optional):${NC}"
+    echo "  1) MySQL/MariaDB"
+    echo "  2) PostgreSQL"
+    echo "  3) None (skip database setup)"
+    echo ""
+
+    while true; do
+        read -p "Enter choice [1-3] [3]: " db_choice
+        db_choice=${db_choice:-3}
+        case $db_choice in
+            1) INSTALL_DATABASE="mysql"; break;;
+            2) INSTALL_DATABASE="postgresql"; break;;
+            3) INSTALL_DATABASE="none"; break;;
+            *) echo "Invalid choice. Please enter 1-3.";;
+        esac
+    done
+
+    if [ "$INSTALL_DATABASE" != "none" ]; then
+        log_info "Database: $INSTALL_DATABASE"
+    fi
+}
+
+# Get firewall configuration
+get_firewall_config() {
+    echo ""
+    echo -e "${BOLD}Firewall Configuration:${NC}"
+
+    read -p "Configure UFW firewall? (y/n) [y]: " setup_ufw
+    setup_ufw=${setup_ufw:-y}
+    SETUP_FIREWALL=$([[ $setup_ufw =~ ^[Yy]$ ]] && echo true || echo false)
+
+    if [ "$SETUP_FIREWALL" = true ]; then
+        log_info "UFW firewall will be configured"
+    fi
+}
+
 # ============================================================================
 # INSTALLATION FUNCTIONS
 # ============================================================================
@@ -372,8 +561,21 @@ get_php_config() {
 # Update package lists
 update_packages() {
     log_step "Updating package lists..."
-    apt-get update >/dev/null 2>&1
-    log_success "Package lists updated"
+    if apt-get update >> "$LOG_FILE" 2>&1; then
+        log_success "Package lists updated"
+    else
+        log_warning "Package update had some issues, continuing..."
+    fi
+}
+
+# Install essential packages
+install_essentials() {
+    log_step "Installing essential packages..."
+
+    local essentials="curl wget git ca-certificates gnupg lsb-release software-properties-common"
+    for pkg in $essentials; do
+        install_package "$pkg" true
+    done
 }
 
 # Install Apache2
@@ -383,13 +585,18 @@ install_apache() {
     install_package "apache2"
 
     # Enable required modules
-    local modules="proxy proxy_http proxy_wstunnel proxy_fcgi rewrite ssl headers expires"
+    local modules="proxy proxy_http proxy_wstunnel proxy_fcgi rewrite ssl headers expires deflate"
     for mod in $modules; do
-        a2enmod $mod >/dev/null 2>&1 || true
+        if a2enmod $mod >> "$LOG_FILE" 2>&1; then
+            log_debug "Enabled Apache module: $mod"
+        fi
     done
 
-    systemctl enable apache2 >/dev/null 2>&1
-    systemctl start apache2 >/dev/null 2>&1
+    # Backup default config
+    backup_item "/etc/apache2/sites-available/000-default.conf"
+
+    systemctl enable apache2 >> "$LOG_FILE" 2>&1 || true
+    systemctl start apache2 >> "$LOG_FILE" 2>&1 || true
 
     log_success "Apache2 configured"
 }
@@ -400,8 +607,11 @@ install_nginx() {
 
     install_package "nginx"
 
-    systemctl enable nginx >/dev/null 2>&1
-    systemctl start nginx >/dev/null 2>&1
+    # Backup default config
+    backup_item "/etc/nginx/sites-available/default"
+
+    systemctl enable nginx >> "$LOG_FILE" 2>&1 || true
+    systemctl start nginx >> "$LOG_FILE" 2>&1 || true
 
     log_success "Nginx configured"
 }
@@ -411,18 +621,27 @@ install_nodejs() {
     log_step "Setting up Node.js..."
 
     if command_exists node; then
-        NODE_VERSION=$(node -v)
-        log_success "Node.js $NODE_VERSION already installed"
+        local node_version=$(node -v)
+        log_success "Node.js $node_version already installed"
     else
-        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
-        apt-get install -y nodejs >/dev/null 2>&1
+        log_info "Installing Node.js 20.x..."
+
+        # Use NodeSource repository
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null
+        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+
+        apt-get update >> "$LOG_FILE" 2>&1
+        install_package "nodejs"
+
         log_success "Node.js $(node -v) installed"
     fi
 
-    # Install PM2
+    # Install PM2 if needed
     if [ "$USE_PM2" = true ]; then
         if ! command_exists pm2; then
-            npm install -g pm2 >/dev/null 2>&1
+            log_info "Installing PM2..."
+            npm install -g pm2 >> "$LOG_FILE" 2>&1
             log_success "PM2 installed"
         else
             log_success "PM2 already installed"
@@ -441,28 +660,33 @@ install_python() {
     install_package "build-essential"
 
     # Install database development libraries for Python packages
-    install_package "libpq-dev"           # PostgreSQL
-    install_package "pkg-config"          # Required for mysqlclient
+    log_info "Installing database development libraries..."
+    install_package "libpq-dev" true           # PostgreSQL
+    install_package "pkg-config" true          # Required for mysqlclient
 
     # Try different MySQL dev package names (varies by distro version)
-    if ! dpkg -l | grep -q "libmysqlclient-dev"; then
+    if ! package_installed "libmysqlclient-dev" && ! package_installed "default-libmysqlclient-dev" && ! package_installed "libmariadb-dev"; then
         log_info "Installing MySQL development libraries..."
-        apt-get install -y default-libmysqlclient-dev >/dev/null 2>&1 || \
-        apt-get install -y libmysqlclient-dev >/dev/null 2>&1 || \
-        apt-get install -y libmariadb-dev >/dev/null 2>&1 || \
+        apt-get install -y default-libmysqlclient-dev >> "$LOG_FILE" 2>&1 || \
+        apt-get install -y libmysqlclient-dev >> "$LOG_FILE" 2>&1 || \
+        apt-get install -y libmariadb-dev >> "$LOG_FILE" 2>&1 || \
         log_warning "MySQL dev libraries not available - mysqlclient may not build"
     fi
 
     log_success "Python $(python3 --version | cut -d ' ' -f 2) ready"
 
-    # Install PM2 for Python process management
+    # Install PM2 for Python process management if needed
     if [ "$USE_PM2" = true ]; then
         if ! command_exists node; then
-            curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
-            apt-get install -y nodejs >/dev/null 2>&1
+            log_info "Installing Node.js for PM2..."
+            mkdir -p /etc/apt/keyrings
+            curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null
+            echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+            apt-get update >> "$LOG_FILE" 2>&1
+            install_package "nodejs"
         fi
         if ! command_exists pm2; then
-            npm install -g pm2 >/dev/null 2>&1
+            npm install -g pm2 >> "$LOG_FILE" 2>&1
             log_success "PM2 installed"
         fi
     fi
@@ -477,9 +701,10 @@ install_php() {
     install_package "php-cli"
 
     if [ "$INSTALL_PHP_EXT" = true ]; then
-        local extensions="php-mysql php-pgsql php-sqlite3 php-mbstring php-xml php-curl php-zip php-gd php-intl php-bcmath"
+        log_info "Installing PHP extensions..."
+        local extensions="php-mysql php-pgsql php-sqlite3 php-mbstring php-xml php-curl php-zip php-gd php-intl php-bcmath php-redis"
         for ext in $extensions; do
-            install_package "$ext" 2>/dev/null || true
+            install_package "$ext" true
         done
     fi
 
@@ -487,32 +712,102 @@ install_php() {
     PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2)
     PHP_FPM_SOCK="/run/php/php${PHP_VERSION}-fpm.sock"
 
-    systemctl enable php${PHP_VERSION}-fpm >/dev/null 2>&1
-    systemctl start php${PHP_VERSION}-fpm >/dev/null 2>&1
+    systemctl enable "php${PHP_VERSION}-fpm" >> "$LOG_FILE" 2>&1 || true
+    systemctl start "php${PHP_VERSION}-fpm" >> "$LOG_FILE" 2>&1 || true
 
     log_success "PHP $PHP_VERSION configured"
+}
+
+# Install Database
+install_database() {
+    if [ "$INSTALL_DATABASE" == "none" ]; then
+        return
+    fi
+
+    log_step "Setting up $INSTALL_DATABASE..."
+
+    if [ "$INSTALL_DATABASE" == "mysql" ]; then
+        install_package "mysql-server" true || install_package "mariadb-server" true
+
+        if package_installed "mysql-server" || package_installed "mariadb-server"; then
+            systemctl enable mysql >> "$LOG_FILE" 2>&1 || systemctl enable mariadb >> "$LOG_FILE" 2>&1 || true
+            systemctl start mysql >> "$LOG_FILE" 2>&1 || systemctl start mariadb >> "$LOG_FILE" 2>&1 || true
+            log_success "MySQL/MariaDB installed"
+            log_warning "Run 'sudo mysql_secure_installation' to secure your database"
+        fi
+    elif [ "$INSTALL_DATABASE" == "postgresql" ]; then
+        install_package "postgresql"
+        install_package "postgresql-contrib"
+
+        systemctl enable postgresql >> "$LOG_FILE" 2>&1 || true
+        systemctl start postgresql >> "$LOG_FILE" 2>&1 || true
+        log_success "PostgreSQL installed"
+    fi
+}
+
+# Setup Firewall
+setup_firewall() {
+    if [ "$SETUP_FIREWALL" != true ]; then
+        return
+    fi
+
+    log_step "Configuring UFW firewall..."
+
+    install_package "ufw"
+
+    # Configure UFW
+    ufw --force reset >> "$LOG_FILE" 2>&1
+    ufw default deny incoming >> "$LOG_FILE" 2>&1
+    ufw default allow outgoing >> "$LOG_FILE" 2>&1
+
+    # Allow SSH
+    ufw allow ssh >> "$LOG_FILE" 2>&1
+
+    # Allow web server
+    if [ "$WEB_SERVER" == "apache2" ]; then
+        ufw allow 'Apache Full' >> "$LOG_FILE" 2>&1
+    else
+        ufw allow 'Nginx Full' >> "$LOG_FILE" 2>&1
+    fi
+
+    # Enable UFW
+    echo "y" | ufw enable >> "$LOG_FILE" 2>&1
+
+    log_success "UFW firewall configured"
 }
 
 # Setup application directory
 setup_app_directory() {
     log_step "Setting up application directory..."
 
+    # Create directory
     mkdir -p "$APP_ROOT"
 
     if [ "$USE_GIT" = true ]; then
         if [ -d "$APP_ROOT/.git" ]; then
             log_info "Git repository exists, pulling latest..."
             cd "$APP_ROOT"
-            git pull origin "$GIT_BRANCH" 2>/dev/null || true
+            git fetch origin >> "$LOG_FILE" 2>&1 || true
+            git checkout "$GIT_BRANCH" >> "$LOG_FILE" 2>&1 || true
+            git pull origin "$GIT_BRANCH" >> "$LOG_FILE" 2>&1 || true
         else
-            # Clone to temp and move (in case directory has files)
-            rm -rf "$APP_ROOT"
-            git clone -b "$GIT_BRANCH" "$GIT_REPO" "$APP_ROOT"
-            log_success "Repository cloned"
+            log_info "Cloning repository..."
+            # Remove directory if it exists but is not a git repo
+            if [ -d "$APP_ROOT" ] && [ "$(ls -A "$APP_ROOT" 2>/dev/null)" ]; then
+                backup_item "$APP_ROOT"
+                rm -rf "$APP_ROOT"
+            fi
+
+            if git clone -b "$GIT_BRANCH" "$GIT_REPO" "$APP_ROOT" >> "$LOG_FILE" 2>&1; then
+                log_success "Repository cloned"
+            else
+                log_error "Failed to clone repository"
+                mkdir -p "$APP_ROOT"
+            fi
         fi
     fi
 
-    # Set permissions
+    # Set ownership
     chown -R www-data:www-data "$APP_ROOT"
     chmod -R 755 "$APP_ROOT"
 
@@ -526,7 +821,7 @@ setup_nodejs_app() {
     cd "$APP_ROOT"
 
     # Create .env if needed
-    if [ ! -f ".env" ] && [ ! -f ".env.local" ]; then
+    if [ ! -f ".env" ] && [ ! -f ".env.local" ] && [ ! -f ".env.production" ]; then
         cat > .env.local << EOF
 # Application environment
 NODE_ENV=production
@@ -538,20 +833,29 @@ EOF
     # Install dependencies
     if [ -f "package.json" ]; then
         log_info "Installing npm dependencies..."
-        sudo -u www-data npm ci --production=false 2>/dev/null || sudo -u www-data npm install 2>/dev/null || {
-            npm ci --production=false 2>/dev/null || npm install 2>/dev/null
-        }
+
+        # Try npm ci first, then npm install
+        if npm ci --omit=dev >> "$LOG_FILE" 2>&1; then
+            log_debug "npm ci succeeded"
+        elif npm install --omit=dev >> "$LOG_FILE" 2>&1; then
+            log_debug "npm install succeeded"
+        else
+            log_warning "npm install with --omit=dev failed, trying full install..."
+            npm install >> "$LOG_FILE" 2>&1 || log_warning "npm install had issues"
+        fi
 
         # Build if build script exists
-        if grep -q '"build"' package.json; then
+        if grep -q '"build"' package.json 2>/dev/null; then
             log_info "Building application..."
-            sudo -u www-data npm run build 2>/dev/null || npm run build 2>/dev/null || true
+            npm run build >> "$LOG_FILE" 2>&1 || log_warning "Build had issues"
         fi
 
         log_success "Node.js app configured"
     else
         log_warning "No package.json found"
     fi
+
+    chown -R www-data:www-data "$APP_ROOT"
 }
 
 # Setup Python app
@@ -566,23 +870,23 @@ setup_python_app() {
         log_info "Created virtual environment"
     fi
 
-    # Install dependencies
+    # Activate and install dependencies
     source venv/bin/activate
 
     log_info "Upgrading pip..."
-    pip install --upgrade pip 2>&1 | tail -1
+    pip install --upgrade pip >> "$LOG_FILE" 2>&1
 
-    # Ensure uvicorn is installed (required for FastAPI/Starlette apps)
-    log_info "Installing uvicorn..."
-    pip install uvicorn 2>&1 | tail -1
+    # Ensure uvicorn and gunicorn are installed (common for Python web apps)
+    log_info "Installing web server packages..."
+    pip install uvicorn gunicorn >> "$LOG_FILE" 2>&1 || true
 
     if [ -f "requirements.txt" ]; then
         log_info "Installing Python dependencies (this may take a while)..."
-        if pip install -r requirements.txt 2>&1 | tee /tmp/pip_install.log | tail -5; then
+
+        if pip install -r requirements.txt >> "$LOG_FILE" 2>&1; then
             log_success "Python dependencies installed"
         else
-            log_warning "Some dependencies may have failed. Check /tmp/pip_install.log"
-            grep -i "error\|failed" /tmp/pip_install.log | head -5 || true
+            log_warning "Some dependencies may have failed. Check $LOG_FILE"
         fi
     else
         log_warning "No requirements.txt found"
@@ -591,6 +895,8 @@ setup_python_app() {
     deactivate
 
     chown -R www-data:www-data "$APP_ROOT"
+
+    log_success "Python app configured"
 }
 
 # Setup PM2
@@ -603,7 +909,11 @@ setup_pm2() {
 
     cd "$APP_ROOT"
 
-    # Create ecosystem file
+    # Create log directory
+    mkdir -p /var/log/pm2
+    chown -R www-data:www-data /var/log/pm2
+
+    # Create ecosystem file based on app type
     if [ "$APP_TYPE" == "nodejs" ]; then
         cat > ecosystem.config.js << EOF
 module.exports = {
@@ -616,26 +926,32 @@ module.exports = {
       NODE_ENV: 'production',
       PORT: $APP_PORT
     },
-    instances: 1,
+    instances: 'max',
+    exec_mode: 'cluster',
     autorestart: true,
     watch: false,
     max_memory_restart: '1G',
     error_file: '/var/log/pm2/${PM2_APP_NAME}-error.log',
-    out_file: '/var/log/pm2/${PM2_APP_NAME}-out.log'
+    out_file: '/var/log/pm2/${PM2_APP_NAME}-out.log',
+    merge_logs: true,
+    time: true
   }]
 };
 EOF
     elif [ "$APP_TYPE" == "python" ]; then
-        # Parse the start command - extract first word as script, rest as args
-        local py_script=$(echo "$PM2_START_CMD" | awk '{print $1}')
-        local py_args=$(echo "$PM2_START_CMD" | cut -d' ' -f2-)
+        # Parse the start command
+        local py_script=$(echo "$START_CMD" | awk '{print $1}')
+        local py_args=$(echo "$START_CMD" | cut -d' ' -f2- -s)
+
+        # If py_args is empty (single word command), set it to empty string
+        [ "$py_args" = "$py_script" ] && py_args=""
 
         cat > ecosystem.config.js << EOF
 module.exports = {
   apps: [{
     name: '$PM2_APP_NAME',
     cwd: '$APP_ROOT',
-    script: 'venv/bin/$py_script',
+    script: './venv/bin/$py_script',
     args: '$py_args',
     interpreter: 'none',
     instances: 1,
@@ -643,27 +959,103 @@ module.exports = {
     watch: false,
     max_memory_restart: '1G',
     error_file: '/var/log/pm2/${PM2_APP_NAME}-error.log',
-    out_file: '/var/log/pm2/${PM2_APP_NAME}-out.log'
+    out_file: '/var/log/pm2/${PM2_APP_NAME}-out.log',
+    merge_logs: true,
+    time: true
   }]
 };
 EOF
     fi
 
-    # Create log directory
-    mkdir -p /var/log/pm2
-    chown -R www-data:www-data /var/log/pm2
+    chown www-data:www-data ecosystem.config.js
 
     # Stop existing app if running
-    pm2 delete "$PM2_APP_NAME" 2>/dev/null || true
+    pm2 delete "$PM2_APP_NAME" >> "$LOG_FILE" 2>&1 || true
 
-    # Start app
-    sudo -u www-data pm2 start ecosystem.config.js 2>/dev/null || pm2 start ecosystem.config.js
-    sudo -u www-data pm2 save 2>/dev/null || pm2 save
+    # Start app with proper user
+    log_info "Starting application with PM2..."
+    cd "$APP_ROOT"
 
-    # Setup startup
-    pm2 startup systemd -u www-data --hp /var/www 2>/dev/null || true
+    if sudo -u www-data pm2 start ecosystem.config.js >> "$LOG_FILE" 2>&1; then
+        log_debug "PM2 started as www-data"
+    else
+        pm2 start ecosystem.config.js >> "$LOG_FILE" 2>&1 || log_warning "PM2 start had issues"
+    fi
+
+    # Save PM2 process list
+    sudo -u www-data pm2 save >> "$LOG_FILE" 2>&1 || pm2 save >> "$LOG_FILE" 2>&1 || true
+
+    # Setup startup script
+    pm2 startup systemd -u www-data --hp /var/www >> "$LOG_FILE" 2>&1 || true
 
     log_success "PM2 configured"
+}
+
+# Setup Systemd service
+setup_systemd() {
+    if [ "$USE_SYSTEMD" != true ]; then
+        return
+    fi
+
+    log_step "Configuring Systemd service..."
+
+    local service_file="/etc/systemd/system/${SYSTEMD_APP_NAME}.service"
+
+    if [ "$APP_TYPE" == "nodejs" ]; then
+        cat > "$service_file" << EOF
+[Unit]
+Description=$PM2_APP_NAME Node.js Application
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=$APP_ROOT
+Environment=NODE_ENV=production
+Environment=PORT=$APP_PORT
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/${SYSTEMD_APP_NAME}.log
+StandardError=append:/var/log/${SYSTEMD_APP_NAME}.error.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    elif [ "$APP_TYPE" == "python" ]; then
+        cat > "$service_file" << EOF
+[Unit]
+Description=$PM2_APP_NAME Python Application
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=$APP_ROOT
+Environment=PATH=$APP_ROOT/venv/bin:/usr/bin
+ExecStart=$APP_ROOT/venv/bin/$START_CMD
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/${SYSTEMD_APP_NAME}.log
+StandardError=append:/var/log/${SYSTEMD_APP_NAME}.error.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    fi
+
+    # Create log files
+    touch "/var/log/${SYSTEMD_APP_NAME}.log" "/var/log/${SYSTEMD_APP_NAME}.error.log"
+    chown www-data:www-data "/var/log/${SYSTEMD_APP_NAME}.log" "/var/log/${SYSTEMD_APP_NAME}.error.log"
+
+    # Reload and start service
+    systemctl daemon-reload
+    systemctl enable "${SYSTEMD_APP_NAME}" >> "$LOG_FILE" 2>&1
+    systemctl start "${SYSTEMD_APP_NAME}" >> "$LOG_FILE" 2>&1 || log_warning "Service start had issues"
+
+    log_success "Systemd service configured: ${SYSTEMD_APP_NAME}"
 }
 
 # ============================================================================
@@ -675,10 +1067,13 @@ create_apache_config() {
 
     local config_file="/etc/apache2/sites-available/${DOMAIN}.conf"
 
+    # Backup existing config
+    backup_item "$config_file"
+
     # Build ServerAlias line
     local alias_line=""
     if [ -n "$SERVER_ALIASES" ]; then
-        alias_line="ServerAlias $SERVER_ALIASES"
+        alias_line="    ServerAlias $SERVER_ALIASES"
     fi
 
     if [ "$USE_PROXY" = true ]; then
@@ -686,8 +1081,9 @@ create_apache_config() {
         cat > "$config_file" << EOF
 <VirtualHost *:80>
     ServerName $DOMAIN
-    $alias_line
+$alias_line
 
+    # Proxy settings
     ProxyPreserveHost On
     ProxyPass / http://127.0.0.1:$APP_PORT/
     ProxyPassReverse / http://127.0.0.1:$APP_PORT/
@@ -698,11 +1094,16 @@ create_apache_config() {
     RewriteCond %{HTTP:Connection} upgrade [NC]
     RewriteRule ^/?(.*) "ws://127.0.0.1:$APP_PORT/\$1" [P,L]
 
-    # Security headers
-    Header always set X-Content-Type-Options nosniff
-    Header always set X-Frame-Options SAMEORIGIN
-    Header always set X-XSS-Protection "1; mode=block"
+    # Timeouts for long-running connections
+    ProxyTimeout 300
 
+    # Security headers
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Logging
     ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}_error.log
     CustomLog \${APACHE_LOG_DIR}/${DOMAIN}_access.log combined
 </VirtualHost>
@@ -712,7 +1113,7 @@ EOF
         cat > "$config_file" << EOF
 <VirtualHost *:80>
     ServerName $DOMAIN
-    $alias_line
+$alias_line
 
     DocumentRoot $APP_ROOT/$PHP_DOC_ROOT
 
@@ -727,9 +1128,15 @@ EOF
     </FilesMatch>
 
     # Security headers
-    Header always set X-Content-Type-Options nosniff
-    Header always set X-Frame-Options SAMEORIGIN
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
     Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Hide sensitive files
+    <FilesMatch "^\.">
+        Require all denied
+    </FilesMatch>
 
     ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}_error.log
     CustomLog \${APACHE_LOG_DIR}/${DOMAIN}_access.log combined
@@ -740,7 +1147,7 @@ EOF
         cat > "$config_file" << EOF
 <VirtualHost *:80>
     ServerName $DOMAIN
-    $alias_line
+$alias_line
 
     DocumentRoot $APP_ROOT
 
@@ -752,7 +1159,7 @@ EOF
 
     # Enable compression
     <IfModule mod_deflate.c>
-        AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css application/javascript application/json
+        AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css application/javascript application/json image/svg+xml
     </IfModule>
 
     # Cache static assets
@@ -763,14 +1170,17 @@ EOF
         ExpiresByType image/gif "access plus 1 year"
         ExpiresByType image/png "access plus 1 year"
         ExpiresByType image/webp "access plus 1 year"
+        ExpiresByType image/svg+xml "access plus 1 year"
         ExpiresByType text/css "access plus 1 month"
         ExpiresByType application/javascript "access plus 1 month"
+        ExpiresByType font/woff2 "access plus 1 year"
     </IfModule>
 
     # Security headers
-    Header always set X-Content-Type-Options nosniff
-    Header always set X-Frame-Options SAMEORIGIN
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
     Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
     ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}_error.log
     CustomLog \${APACHE_LOG_DIR}/${DOMAIN}_access.log combined
@@ -779,14 +1189,16 @@ EOF
     fi
 
     # Enable site
-    a2ensite "${DOMAIN}.conf" >/dev/null 2>&1
-    a2dissite 000-default.conf 2>/dev/null || true
+    a2ensite "${DOMAIN}.conf" >> "$LOG_FILE" 2>&1
+    a2dissite 000-default.conf >> "$LOG_FILE" 2>&1 || true
 
     # Test and reload
-    apache2ctl configtest
-    systemctl reload apache2
-
-    log_success "Apache virtual host created"
+    if apache2ctl configtest >> "$LOG_FILE" 2>&1; then
+        systemctl reload apache2 >> "$LOG_FILE" 2>&1
+        log_success "Apache virtual host created"
+    else
+        log_error "Apache configuration test failed. Check $LOG_FILE"
+    fi
 }
 
 # ============================================================================
@@ -798,6 +1210,9 @@ create_nginx_config() {
 
     local config_file="/etc/nginx/sites-available/${DOMAIN}"
 
+    # Backup existing config
+    backup_item "$config_file"
+
     # Build server_name line
     local server_names="$DOMAIN"
     if [ -n "$SERVER_ALIASES" ]; then
@@ -807,13 +1222,19 @@ create_nginx_config() {
     if [ "$USE_PROXY" = true ]; then
         # Reverse proxy configuration
         cat > "$config_file" << EOF
+upstream ${DOMAIN//./_}_backend {
+    server 127.0.0.1:$APP_PORT;
+    keepalive 64;
+}
+
 server {
     listen 80;
     listen [::]:80;
     server_name $server_names;
 
+    # Proxy settings
     location / {
-        proxy_pass http://127.0.0.1:$APP_PORT;
+        proxy_pass http://${DOMAIN//./_}_backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -823,12 +1244,21 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
         proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
     }
 
     # Security headers
-    add_header X-Content-Type-Options nosniff;
-    add_header X-Frame-Options SAMEORIGIN;
-    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
 
     access_log /var/log/nginx/${DOMAIN}_access.log;
     error_log /var/log/nginx/${DOMAIN}_error.log;
@@ -845,6 +1275,11 @@ server {
     root $APP_ROOT/$PHP_DOC_ROOT;
     index index.php index.html index.htm;
 
+    # Security - hide sensitive files
+    location ~ /\. {
+        deny all;
+    }
+
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
     }
@@ -853,16 +1288,19 @@ server {
         fastcgi_pass unix:$PHP_FPM_SOCK;
         fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
         include fastcgi_params;
-    }
-
-    location ~ /\.(?!well-known).* {
-        deny all;
+        fastcgi_read_timeout 300;
     }
 
     # Security headers
-    add_header X-Content-Type-Options nosniff;
-    add_header X-Frame-Options SAMEORIGIN;
-    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
 
     access_log /var/log/nginx/${DOMAIN}_access.log;
     error_log /var/log/nginx/${DOMAIN}_error.log;
@@ -880,23 +1318,31 @@ server {
     index index.html index.htm;
 
     location / {
-        try_files \$uri \$uri/ =404;
+        try_files \$uri \$uri/ /index.html =404;
     }
 
-    # Enable gzip compression
-    gzip on;
-    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+    # Security - hide sensitive files
+    location ~ /\. {
+        deny all;
+    }
 
     # Cache static assets
-    location ~* \.(jpg|jpeg|png|gif|ico|css|js|webp|woff|woff2)$ {
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js|webp|woff|woff2|svg)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
     }
 
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+
     # Security headers
-    add_header X-Content-Type-Options nosniff;
-    add_header X-Frame-Options SAMEORIGIN;
-    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     access_log /var/log/nginx/${DOMAIN}_access.log;
     error_log /var/log/nginx/${DOMAIN}_error.log;
@@ -909,10 +1355,12 @@ EOF
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
     # Test and reload
-    nginx -t
-    systemctl reload nginx
-
-    log_success "Nginx server block created"
+    if nginx -t >> "$LOG_FILE" 2>&1; then
+        systemctl reload nginx >> "$LOG_FILE" 2>&1
+        log_success "Nginx server block created"
+    else
+        log_error "Nginx configuration test failed. Check $LOG_FILE"
+    fi
 }
 
 # ============================================================================
@@ -943,44 +1391,50 @@ setup_ssl() {
 setup_letsencrypt() {
     install_package "certbot"
 
+    # Build domain list for certbot
+    local domains="-d $DOMAIN"
+    if [ -n "$SERVER_ALIASES" ]; then
+        for alias in $SERVER_ALIASES; do
+            domains="$domains -d $alias"
+        done
+    fi
+
     if [ "$WEB_SERVER" == "apache2" ]; then
         install_package "python3-certbot-apache"
 
-        local domains="-d $DOMAIN"
-        [ -n "$SERVER_ALIASES" ] && domains="$domains $(echo $SERVER_ALIASES | sed 's/ / -d /g' | sed 's/^/-d /')"
-
-        certbot --apache $domains --non-interactive --agree-tos --email "$SSL_EMAIL" --redirect || {
-            log_warning "Certbot failed. You can run manually:"
-            echo "sudo certbot --apache -d $DOMAIN"
-        }
+        log_info "Obtaining Let's Encrypt certificate..."
+        if certbot --apache $domains --non-interactive --agree-tos --email "$SSL_EMAIL" --redirect >> "$LOG_FILE" 2>&1; then
+            log_success "Let's Encrypt SSL configured"
+        else
+            log_warning "Certbot failed. You can run manually: sudo certbot --apache $domains"
+        fi
     else
         install_package "python3-certbot-nginx"
 
-        local domains="-d $DOMAIN"
-        [ -n "$SERVER_ALIASES" ] && domains="$domains $(echo $SERVER_ALIASES | sed 's/ / -d /g' | sed 's/^/-d /')"
-
-        certbot --nginx $domains --non-interactive --agree-tos --email "$SSL_EMAIL" --redirect || {
-            log_warning "Certbot failed. You can run manually:"
-            echo "sudo certbot --nginx -d $DOMAIN"
-        }
+        log_info "Obtaining Let's Encrypt certificate..."
+        if certbot --nginx $domains --non-interactive --agree-tos --email "$SSL_EMAIL" --redirect >> "$LOG_FILE" 2>&1; then
+            log_success "Let's Encrypt SSL configured"
+        else
+            log_warning "Certbot failed. You can run manually: sudo certbot --nginx $domains"
+        fi
     fi
 
     # Enable auto-renewal
-    systemctl enable certbot.timer 2>/dev/null || true
-    systemctl start certbot.timer 2>/dev/null || true
-
-    log_success "Let's Encrypt SSL configured"
+    systemctl enable certbot.timer >> "$LOG_FILE" 2>&1 || true
+    systemctl start certbot.timer >> "$LOG_FILE" 2>&1 || true
 }
 
 setup_selfsigned() {
     local ssl_dir="/etc/ssl/$DOMAIN"
     mkdir -p "$ssl_dir"
 
+    log_info "Generating self-signed certificate..."
+
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout "$ssl_dir/privkey.pem" \
         -out "$ssl_dir/fullchain.pem" \
         -subj "/C=US/ST=State/L=City/O=Organization/CN=$DOMAIN" \
-        2>/dev/null
+        >> "$LOG_FILE" 2>&1
 
     SSL_CERT_PATH="$ssl_dir/fullchain.pem"
     SSL_KEY_PATH="$ssl_dir/privkey.pem"
@@ -992,59 +1446,163 @@ setup_selfsigned() {
 }
 
 setup_existing_ssl() {
-    if [ ! -f "$SSL_CERT_PATH" ] || [ ! -f "$SSL_KEY_PATH" ]; then
-        log_error "SSL certificate or key file not found"
-        return
-    fi
-
     configure_ssl_vhost
-
     log_success "Existing SSL certificate configured"
 }
 
 configure_ssl_vhost() {
+    local server_names="$DOMAIN"
+    if [ -n "$SERVER_ALIASES" ]; then
+        server_names="$DOMAIN $SERVER_ALIASES"
+    fi
+
     if [ "$WEB_SERVER" == "apache2" ]; then
-        # Add SSL configuration to Apache
         local ssl_config="/etc/apache2/sites-available/${DOMAIN}-ssl.conf"
 
-        cat > "$ssl_config" << EOF
+        # Read the HTTP config and modify for SSL
+        if [ "$USE_PROXY" = true ]; then
+            cat > "$ssl_config" << EOF
 <VirtualHost *:443>
     ServerName $DOMAIN
-    $([ -n "$SERVER_ALIASES" ] && echo "ServerAlias $SERVER_ALIASES")
+    $([ -n "$SERVER_ALIASES" ] && echo "    ServerAlias $SERVER_ALIASES")
 
     SSLEngine on
     SSLCertificateFile $SSL_CERT_PATH
     SSLCertificateKeyFile $SSL_KEY_PATH
 
-    $(cat /etc/apache2/sites-available/${DOMAIN}.conf | grep -v "VirtualHost" | grep -v "ServerName" | grep -v "ServerAlias")
+    # Proxy settings
+    ProxyPreserveHost On
+    ProxyPass / http://127.0.0.1:$APP_PORT/
+    ProxyPassReverse / http://127.0.0.1:$APP_PORT/
+
+    # WebSocket support
+    RewriteEngine On
+    RewriteCond %{HTTP:Upgrade} websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteRule ^/?(.*) "ws://127.0.0.1:$APP_PORT/\$1" [P,L]
+
+    ProxyTimeout 300
+
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}_ssl_error.log
+    CustomLog \${APACHE_LOG_DIR}/${DOMAIN}_ssl_access.log combined
+</VirtualHost>
+EOF
+        else
+            cat > "$ssl_config" << EOF
+<VirtualHost *:443>
+    ServerName $DOMAIN
+    $([ -n "$SERVER_ALIASES" ] && echo "    ServerAlias $SERVER_ALIASES")
+
+    SSLEngine on
+    SSLCertificateFile $SSL_CERT_PATH
+    SSLCertificateKeyFile $SSL_KEY_PATH
+
+    DocumentRoot $APP_ROOT$([ "$APP_TYPE" == "php" ] && echo "/$PHP_DOC_ROOT")
+
+    <Directory $APP_ROOT$([ "$APP_TYPE" == "php" ] && echo "/$PHP_DOC_ROOT")>
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    $([ "$APP_TYPE" == "php" ] && echo "
+    <FilesMatch \.php$>
+        SetHandler \"proxy:unix:$PHP_FPM_SOCK|fcgi://localhost\"
+    </FilesMatch>")
+
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}_ssl_error.log
+    CustomLog \${APACHE_LOG_DIR}/${DOMAIN}_ssl_access.log combined
+</VirtualHost>
+EOF
+        fi
+
+        # Add HTTP to HTTPS redirect
+        cat >> "/etc/apache2/sites-available/${DOMAIN}.conf" << EOF
+
+# Redirect HTTP to HTTPS
+<VirtualHost *:80>
+    ServerName $DOMAIN
+    $([ -n "$SERVER_ALIASES" ] && echo "    ServerAlias $SERVER_ALIASES")
+    RewriteEngine On
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}\$1 [R=301,L]
 </VirtualHost>
 EOF
 
-        a2ensite "${DOMAIN}-ssl.conf" >/dev/null 2>&1
-        systemctl reload apache2
+        a2ensite "${DOMAIN}-ssl.conf" >> "$LOG_FILE" 2>&1
+        apache2ctl configtest >> "$LOG_FILE" 2>&1 && systemctl reload apache2 >> "$LOG_FILE" 2>&1
 
     else
-        # Add SSL to Nginx
-        local config_file="/etc/nginx/sites-available/${DOMAIN}"
+        # Nginx SSL configuration
+        cat >> "/etc/nginx/sites-available/${DOMAIN}" << EOF
 
-        cat >> "$config_file" << EOF
-
+# HTTPS server
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name $DOMAIN $(echo $SERVER_ALIASES);
+    server_name $server_names;
 
     ssl_certificate $SSL_CERT_PATH;
     ssl_certificate_key $SSL_KEY_PATH;
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
     ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
 
-    $(cat /etc/nginx/sites-available/${DOMAIN} | grep -A 100 "location" | head -n -1)
+    # HSTS
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    $(if [ "$USE_PROXY" = true ]; then
+        echo "
+    location / {
+        proxy_pass http://${DOMAIN//./_}_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+    }"
+    else
+        echo "
+    root $APP_ROOT$([ "$APP_TYPE" == "php" ] && echo "/$PHP_DOC_ROOT");
+    index index$([ "$APP_TYPE" == "php" ] && echo ".php") index.html;
+
+    location / {
+        try_files \$uri \$uri/ $([ "$APP_TYPE" == "php" ] && echo "/index.php?\$query_string" || echo "=404");
+    }
+
+    $([ "$APP_TYPE" == "php" ] && echo "
+    location ~ \.php$ {
+        fastcgi_pass unix:$PHP_FPM_SOCK;
+        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }")"
+    fi)
+
+    access_log /var/log/nginx/${DOMAIN}_ssl_access.log;
+    error_log /var/log/nginx/${DOMAIN}_ssl_error.log;
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $server_names;
+    return 301 https://\$host\$request_uri;
 }
 EOF
 
-        nginx -t && systemctl reload nginx
+        nginx -t >> "$LOG_FILE" 2>&1 && systemctl reload nginx >> "$LOG_FILE" 2>&1
     fi
 }
 
@@ -1056,25 +1614,31 @@ create_helper_scripts() {
     log_step "Creating helper scripts..."
 
     # Update script
-    cat > "$APP_ROOT/update.sh" << EOF
+    cat > "$APP_ROOT/update.sh" << 'SCRIPT_HEADER'
 #!/bin/bash
 set -e
+SCRIPT_HEADER
+
+    cat >> "$APP_ROOT/update.sh" << EOF
 echo "Updating $DOMAIN..."
 cd "$APP_ROOT"
 
 # Pull latest code
-git pull origin ${GIT_BRANCH:-main} 2>/dev/null || true
+if [ -d ".git" ]; then
+    git pull origin ${GIT_BRANCH:-main}
+fi
 
-# Update based on app type
 EOF
 
     if [ "$APP_TYPE" == "nodejs" ]; then
         cat >> "$APP_ROOT/update.sh" << EOF
-npm ci
+# Update Node.js dependencies
+npm ci --omit=dev || npm install --omit=dev
 npm run build 2>/dev/null || true
 EOF
     elif [ "$APP_TYPE" == "python" ]; then
         cat >> "$APP_ROOT/update.sh" << EOF
+# Update Python dependencies
 source venv/bin/activate
 pip install -r requirements.txt
 alembic upgrade head 2>/dev/null || true
@@ -1083,26 +1647,25 @@ EOF
     fi
 
     if [ "$USE_PM2" = true ]; then
-        cat >> "$APP_ROOT/update.sh" << EOF
-
-# Restart PM2 app
-pm2 restart $PM2_APP_NAME
-EOF
+        echo "pm2 restart $PM2_APP_NAME" >> "$APP_ROOT/update.sh"
+    elif [ "$USE_SYSTEMD" = true ]; then
+        echo "sudo systemctl restart $SYSTEMD_APP_NAME" >> "$APP_ROOT/update.sh"
     fi
 
-    cat >> "$APP_ROOT/update.sh" << EOF
-
-echo "Update complete!"
-EOF
+    echo 'echo "Update complete!"' >> "$APP_ROOT/update.sh"
 
     # Restart script
     cat > "$APP_ROOT/restart.sh" << EOF
 #!/bin/bash
+echo "Restarting services..."
 EOF
 
     if [ "$USE_PM2" = true ]; then
         echo "pm2 restart $PM2_APP_NAME" >> "$APP_ROOT/restart.sh"
+    elif [ "$USE_SYSTEMD" = true ]; then
+        echo "sudo systemctl restart $SYSTEMD_APP_NAME" >> "$APP_ROOT/restart.sh"
     fi
+
     echo "sudo systemctl reload $WEB_SERVER" >> "$APP_ROOT/restart.sh"
     echo 'echo "Services restarted"' >> "$APP_ROOT/restart.sh"
 
@@ -1114,28 +1677,48 @@ EOF
 
     if [ "$USE_PM2" = true ]; then
         echo "pm2 logs $PM2_APP_NAME --lines 50" >> "$APP_ROOT/logs.sh"
+    elif [ "$USE_SYSTEMD" = true ]; then
+        echo "sudo journalctl -u $SYSTEMD_APP_NAME -n 50 --no-pager" >> "$APP_ROOT/logs.sh"
     fi
 
     cat >> "$APP_ROOT/logs.sh" << EOF
 echo ""
-echo "=== Web Server Logs ==="
-tail -50 /var/log/${WEB_SERVER}/${DOMAIN}*error.log 2>/dev/null || tail -50 /var/log/${WEB_SERVER}/error.log
+echo "=== Web Server Error Logs ==="
+sudo tail -50 /var/log/${WEB_SERVER}/${DOMAIN}*error.log 2>/dev/null || sudo tail -50 /var/log/${WEB_SERVER}/error.log
 EOF
 
     # Status script
     cat > "$APP_ROOT/status.sh" << EOF
 #!/bin/bash
-echo "=== Service Status ==="
+echo "=== $DOMAIN Status ==="
+echo ""
+echo "Web Server ($WEB_SERVER):"
 systemctl status $WEB_SERVER --no-pager | head -5
 EOF
 
     if [ "$USE_PM2" = true ]; then
-        echo "echo ''" >> "$APP_ROOT/status.sh"
-        echo "echo '=== PM2 Status ==='" >> "$APP_ROOT/status.sh"
-        echo "pm2 status" >> "$APP_ROOT/status.sh"
+        cat >> "$APP_ROOT/status.sh" << EOF
+echo ""
+echo "PM2 Application:"
+pm2 status $PM2_APP_NAME
+EOF
+    elif [ "$USE_SYSTEMD" = true ]; then
+        cat >> "$APP_ROOT/status.sh" << EOF
+echo ""
+echo "Application Service:"
+systemctl status $SYSTEMD_APP_NAME --no-pager | head -10
+EOF
     fi
 
-    # Make executable
+    if [ "$SSL_TYPE" == "letsencrypt" ]; then
+        cat >> "$APP_ROOT/status.sh" << EOF
+echo ""
+echo "SSL Certificate:"
+sudo certbot certificates 2>/dev/null | grep -A3 "$DOMAIN" || echo "No Let's Encrypt certificate found"
+EOF
+    fi
+
+    # Make scripts executable
     chmod +x "$APP_ROOT"/*.sh
     chown -R www-data:www-data "$APP_ROOT"
 
@@ -1153,48 +1736,68 @@ print_summary() {
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${BOLD}Configuration:${NC}"
-    echo "  Domain:        $DOMAIN"
-    [ -n "$SERVER_ALIASES" ] && echo "  Aliases:       $SERVER_ALIASES"
-    echo "  Web Server:    $WEB_SERVER"
-    echo "  App Type:      $APP_TYPE"
-    echo "  App Directory: $APP_ROOT"
-    [ "$USE_PROXY" = true ] && echo "  App Port:      $APP_PORT"
-    echo "  SSL:           $SSL_TYPE"
+    echo "  Domain:          $DOMAIN"
+    [ -n "$SERVER_ALIASES" ] && echo "  Aliases:         $SERVER_ALIASES"
+    echo "  Web Server:      $WEB_SERVER"
+    echo "  App Type:        $APP_TYPE"
+    echo "  App Directory:   $APP_ROOT"
+    [ "$USE_PROXY" = true ] && echo "  App Port:        $APP_PORT"
+    echo "  SSL:             $SSL_TYPE"
+    [ "$USE_PM2" = true ] && echo "  Process Manager: PM2 ($PM2_APP_NAME)"
+    [ "$USE_SYSTEMD" = true ] && echo "  Process Manager: Systemd ($SYSTEMD_APP_NAME)"
+    [ "$SETUP_FIREWALL" = true ] && echo "  Firewall:        UFW enabled"
     echo ""
     echo -e "${BOLD}URLs:${NC}"
     if [ "$SSL_TYPE" != "none" ]; then
-        echo "  https://$DOMAIN"
+        echo -e "  ${GREEN}https://$DOMAIN${NC}"
     else
-        echo "  http://$DOMAIN"
+        echo -e "  ${YELLOW}http://$DOMAIN${NC}"
     fi
     echo ""
     echo -e "${BOLD}Helper Scripts:${NC}"
-    echo "  Update:   $APP_ROOT/update.sh"
-    echo "  Restart:  $APP_ROOT/restart.sh"
+    echo "  Update:   sudo $APP_ROOT/update.sh"
+    echo "  Restart:  sudo $APP_ROOT/restart.sh"
     echo "  Logs:     $APP_ROOT/logs.sh"
     echo "  Status:   $APP_ROOT/status.sh"
     echo ""
     echo -e "${BOLD}Useful Commands:${NC}"
     if [ "$USE_PM2" = true ]; then
-        echo "  pm2 status                    # Check app status"
-        echo "  pm2 logs $PM2_APP_NAME        # View app logs"
-        echo "  pm2 restart $PM2_APP_NAME     # Restart app"
+        echo "  pm2 status                      # Check app status"
+        echo "  pm2 logs $PM2_APP_NAME          # View app logs"
+        echo "  pm2 restart $PM2_APP_NAME       # Restart app"
+    elif [ "$USE_SYSTEMD" = true ]; then
+        echo "  systemctl status $SYSTEMD_APP_NAME   # Check app status"
+        echo "  journalctl -u $SYSTEMD_APP_NAME -f   # View app logs"
+        echo "  systemctl restart $SYSTEMD_APP_NAME  # Restart app"
     fi
-    echo "  sudo systemctl status $WEB_SERVER   # Web server status"
-    echo "  sudo tail -f /var/log/$WEB_SERVER/${DOMAIN}_error.log"
+    echo "  systemctl status $WEB_SERVER    # Web server status"
+    echo ""
+    echo -e "${BOLD}Log File:${NC}"
+    echo "  $LOG_FILE"
     echo ""
 
     if [ "$APP_TYPE" == "python" ]; then
-        echo -e "${YELLOW}Note:${NC} Don't forget to create your .env file:"
-        echo "  nano $APP_ROOT/.env"
+        echo -e "${YELLOW}Note:${NC} Don't forget to:"
+        echo "  1. Create your .env file: nano $APP_ROOT/.env"
+        echo "  2. Run migrations: cd $APP_ROOT && source venv/bin/activate && alembic upgrade head"
         echo ""
     fi
 
-    if [ "$APP_TYPE" == "nodejs" ] && [ ! -f "$APP_ROOT/.env.local" ]; then
-        echo -e "${YELLOW}Note:${NC} You may need to configure environment variables:"
-        echo "  nano $APP_ROOT/.env.local"
+    if [ "$APP_TYPE" == "nodejs" ]; then
+        echo -e "${YELLOW}Note:${NC} Configure environment variables in:"
+        echo "  $APP_ROOT/.env.local or $APP_ROOT/.env.production"
         echo ""
     fi
+
+    if [ "$INSTALL_DATABASE" != "none" ]; then
+        echo -e "${YELLOW}Database:${NC} $INSTALL_DATABASE is installed"
+        if [ "$INSTALL_DATABASE" == "mysql" ]; then
+            echo "  Run: sudo mysql_secure_installation"
+        fi
+        echo ""
+    fi
+
+    echo -e "${GREEN}Setup completed successfully!${NC}"
 }
 
 # ============================================================================
@@ -1215,14 +1818,25 @@ main() {
     get_git_config
     get_php_config
     get_pm_config
+    get_database_config
+    get_firewall_config
     get_ssl_config
 
     echo ""
-    echo -e "${BOLD}Ready to proceed with installation.${NC}"
-    read -p "Continue? (y/n) " -n 1 -r
+    echo -e "${BOLD}Configuration Summary:${NC}"
+    echo "  Web Server:    $WEB_SERVER"
+    echo "  App Type:      $APP_TYPE"
+    echo "  Domain:        $DOMAIN"
+    echo "  Directory:     $APP_ROOT"
+    [ "$USE_PROXY" = true ] && echo "  Port:          $APP_PORT"
+    echo "  SSL:           $SSL_TYPE"
+    [ "$USE_GIT" = true ] && echo "  Git:           $GIT_REPO ($GIT_BRANCH)"
+    echo ""
+
+    read -p "Continue with installation? (y/n) " -n 1 -r
     echo ""
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        log_error "Setup cancelled"
+        log_error "Setup cancelled by user"
         exit 1
     fi
 
@@ -1230,8 +1844,12 @@ main() {
     log_step "Starting installation..."
     echo ""
 
+    # Create backup directory
+    mkdir -p "$BACKUP_DIR"
+
     # Install components
     update_packages
+    install_essentials
 
     case $WEB_SERVER in
         apache2) install_apache;;
@@ -1244,6 +1862,9 @@ main() {
         php) install_php;;
     esac
 
+    install_database
+    setup_firewall
+
     # Setup application
     setup_app_directory
 
@@ -1253,6 +1874,7 @@ main() {
     esac
 
     setup_pm2
+    setup_systemd
 
     # Configure web server
     case $WEB_SERVER in
