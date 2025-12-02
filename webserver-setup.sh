@@ -86,8 +86,11 @@ install_package() {
     local pkg=$1
     if ! dpkg -l | grep -q "^ii  $pkg "; then
         log_info "Installing $pkg..."
-        apt-get install -y "$pkg" >/dev/null 2>&1
-        log_success "$pkg installed"
+        if apt-get install -y "$pkg" >/dev/null 2>&1; then
+            log_success "$pkg installed"
+        else
+            log_warning "$pkg failed to install (may not be available)"
+        fi
     else
         log_success "$pkg already installed"
     fi
@@ -439,8 +442,16 @@ install_python() {
 
     # Install database development libraries for Python packages
     install_package "libpq-dev"           # PostgreSQL
-    install_package "default-libmysqlclient-dev"  # MySQL
     install_package "pkg-config"          # Required for mysqlclient
+
+    # Try different MySQL dev package names (varies by distro version)
+    if ! dpkg -l | grep -q "libmysqlclient-dev"; then
+        log_info "Installing MySQL development libraries..."
+        apt-get install -y default-libmysqlclient-dev >/dev/null 2>&1 || \
+        apt-get install -y libmysqlclient-dev >/dev/null 2>&1 || \
+        apt-get install -y libmariadb-dev >/dev/null 2>&1 || \
+        log_warning "MySQL dev libraries not available - mysqlclient may not build"
+    fi
 
     log_success "Python $(python3 --version | cut -d ' ' -f 2) ready"
 
