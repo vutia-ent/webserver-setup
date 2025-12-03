@@ -1754,16 +1754,29 @@ create_apache_config() {
     ServerName $DOMAIN
 $alias_line
 
+    # Enable rewrite engine
+    RewriteEngine On
+
+    # CORS Preflight - Handle OPTIONS requests (prevents 503 on preflight)
+    # This is essential for frontend apps calling backend APIs
+    RewriteCond %{REQUEST_METHOD} =OPTIONS
+    RewriteRule ^(.*)\$ \$1 [R=204,L]
+
+    # CORS Headers for API responses (adjust origins as needed)
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, X-Requested-With, Accept, Origin"
+    Header always set Access-Control-Max-Age "3600"
+
+    # WebSocket support
+    RewriteCond %{HTTP:Upgrade} websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteRule ^/?(.*) "ws://127.0.0.1:$APP_PORT/\$1" [P,L]
+
     # Proxy settings
     ProxyPreserveHost On
     ProxyPass / http://127.0.0.1:$APP_PORT/
     ProxyPassReverse / http://127.0.0.1:$APP_PORT/
-
-    # WebSocket support
-    RewriteEngine On
-    RewriteCond %{HTTP:Upgrade} websocket [NC]
-    RewriteCond %{HTTP:Connection} upgrade [NC]
-    RewriteRule ^/?(.*) "ws://127.0.0.1:$APP_PORT/\$1" [P,L]
 
     # Timeouts for long-running connections
     ProxyTimeout 300
@@ -2305,19 +2318,32 @@ configure_ssl_vhost() {
     SSLCertificateFile $SSL_CERT_PATH
     SSLCertificateKeyFile $SSL_KEY_PATH
 
+    # Enable rewrite engine
+    RewriteEngine On
+
+    # CORS Preflight - Handle OPTIONS requests (prevents 503 on preflight)
+    RewriteCond %{REQUEST_METHOD} =OPTIONS
+    RewriteRule ^(.*)\$ \$1 [R=204,L]
+
+    # CORS Headers for API responses
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, X-Requested-With, Accept, Origin"
+    Header always set Access-Control-Max-Age "3600"
+
+    # WebSocket support
+    RewriteCond %{HTTP:Upgrade} websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteRule ^/?(.*) "ws://127.0.0.1:$APP_PORT/\$1" [P,L]
+
     # Proxy settings
     ProxyPreserveHost On
     ProxyPass / http://127.0.0.1:$APP_PORT/
     ProxyPassReverse / http://127.0.0.1:$APP_PORT/
 
-    # WebSocket support
-    RewriteEngine On
-    RewriteCond %{HTTP:Upgrade} websocket [NC]
-    RewriteCond %{HTTP:Connection} upgrade [NC]
-    RewriteRule ^/?(.*) "ws://127.0.0.1:$APP_PORT/\$1" [P,L]
-
     ProxyTimeout 300
 
+    # Security headers
     Header always set X-Content-Type-Options "nosniff"
     Header always set X-Frame-Options "SAMEORIGIN"
     Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
