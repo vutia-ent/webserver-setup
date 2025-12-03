@@ -1,25 +1,36 @@
-# Universal Web Server Setup Script v2.0
+# Universal Web Server Setup Script v3.0
 
-A comprehensive, production-ready bash script for setting up web applications on Ubuntu/Debian servers with Apache2 or Nginx.
+A comprehensive, production-ready bash script for setting up web applications on Ubuntu/Debian servers with Apache2 or Nginx. Now with full frontend framework support!
 
 ## Features
 
 ### Core Features
 - **Web Server Support**: Apache2 or Nginx (auto-installs if missing)
-- **Application Types**: Node.js, Python, PHP, Static files, or reverse proxy
 - **SSL/TLS**: Let's Encrypt (auto-renewal), self-signed, or existing certificates
-- **Process Management**: PM2 or Systemd for Node.js and Python applications
+- **Process Management**: PM2 or Systemd for SSR applications
 - **Git Integration**: Clone repositories during setup
-
-### New in v2.0
 - **Database Setup**: Optional MySQL/MariaDB or PostgreSQL installation
 - **UFW Firewall**: Automatic firewall configuration
-- **Systemd Support**: Alternative to PM2 for process management
-- **Improved Logging**: Full installation log at `/var/log/webserver-setup.log`
-- **Automatic Backups**: Existing configs backed up before changes
-- **Better Error Handling**: Graceful error recovery with detailed messages
-- **Input Validation**: Domain, email, and URL validation
-- **Configuration Summary**: Review before installation begins
+
+### Backend Support
+- **Node.js**: Express, NestJS, Fastify, and more
+- **Python**: FastAPI, Django, Flask
+- **PHP**: Laravel, WordPress, Symfony
+
+### Frontend Support (NEW in v3.0)
+- **Next.js**: SSR, Static Export, and Standalone modes
+- **Nuxt.js**: SSR, Static Generation, and SPA modes
+- **React**: Vite and Create React App
+- **Vue.js**: Vite and Vue CLI
+- **Angular**: Angular CLI
+- **Svelte/SvelteKit**: SSR, Static, and SPA modes
+
+### Frontend-Specific Features
+- **Package Manager Selection**: npm, pnpm, yarn, or bun
+- **Node.js Version Selection**: 18, 20, or 22 LTS
+- **Build-time Environment Variables**: Configure during setup
+- **Optimized Caching**: Immutable hashes for assets, proper SPA routing
+- **API URL Configuration**: Automatic environment setup for backend connections
 
 ## Requirements
 
@@ -52,24 +63,77 @@ Select Web Server:
 ### 2. Application Type
 ```
 Select Application Type:
-  1) Node.js  (Next.js, Express, NestJS, etc.)
+  ── Backend ──
+  1) Node.js  (Express, NestJS, Fastify, etc.)
   2) Python   (FastAPI, Django, Flask)
   3) PHP      (Laravel, WordPress, Symfony)
-  4) Static   (HTML, CSS, JS, React build)
-  5) Proxy    (reverse proxy to existing app)
+  ── Frontend ──
+  4) Next.js  (React SSR/SSG framework)
+  5) Nuxt.js  (Vue SSR/SSG framework)
+  6) React    (SPA - Vite, CRA)
+  7) Vue.js   (SPA - Vite, Vue CLI)
+  8) Angular  (SPA - Angular CLI)
+  9) Svelte   (SPA/SSR - SvelteKit)
+  ── Other ──
+  10) Static  (pre-built HTML, CSS, JS)
+  11) Proxy   (reverse proxy to existing app)
 ```
 
-### 3. Domain Configuration
+### 3. Frontend Configuration (for frontend frameworks)
+
+#### Deployment Mode
+```
+# Next.js
+Next.js Deployment Mode:
+  1) SSR        (Server-Side Rendering - needs Node.js server)
+  2) Static     (Static Export - output: 'export' in next.config.js)
+  3) Standalone (Self-contained server - output: 'standalone')
+
+# Nuxt.js
+Nuxt.js Deployment Mode:
+  1) SSR        (Server-Side Rendering - universal mode)
+  2) Static     (Static Generation - nuxt generate)
+  3) SPA        (Single Page Application - ssr: false)
+
+# Svelte
+Svelte Deployment Mode:
+  1) SvelteKit SSR    (Server-Side Rendering)
+  2) SvelteKit Static (adapter-static)
+  3) Svelte SPA       (Vite only, no SvelteKit)
+```
+
+#### Node.js Version
+```
+Node.js Version:
+  1) Node.js 20 LTS (recommended)
+  2) Node.js 22 LTS (latest LTS)
+  3) Node.js 18 LTS (older LTS)
+```
+
+#### Package Manager
+```
+Package Manager:
+  1) npm   (default)
+  2) pnpm  (fast, efficient)
+  3) yarn  (classic)
+  4) bun   (fastest, all-in-one)
+```
+
+#### Environment Variables
+- Configure build-time environment variables during setup
+- Automatic API URL configuration for frontend-backend connections
+
+### 4. Domain Configuration
 - Main domain with validation (e.g., `example.com`)
 - Optional www subdomain
 - Additional subdomains (comma-separated)
 
-### 4. Application Settings
+### 5. Application Settings
 - Application directory (default: `/var/www/yourdomain.com`)
-- Port configuration (Node.js: 3000, Python: 8000)
+- Port configuration (SSR apps: 3000)
 - Git repository URL and branch
 
-### 5. Process Manager
+### 6. Process Manager (for SSR apps)
 ```
 Process Manager:
   1) PM2       (recommended, easy management)
@@ -77,7 +141,7 @@ Process Manager:
   3) None      (manual process management)
 ```
 
-### 6. Database Setup (Optional)
+### 7. Database Setup (Optional)
 ```
 Database Setup (optional):
   1) MySQL/MariaDB
@@ -85,17 +149,7 @@ Database Setup (optional):
   3) None (skip database setup)
 ```
 
-### 7. Firewall Configuration
-- UFW firewall setup with SSH and web server rules
-
-### 8. SSL/TLS Configuration
-```
-SSL/TLS Configuration:
-  1) Let's Encrypt  (free, auto-renewal, recommended)
-  2) Self-signed    (for testing/development)
-  3) No SSL         (HTTP only - not recommended)
-  4) Existing cert  (provide certificate paths)
-```
+### 8. Firewall & SSL Configuration
 
 ## What Gets Installed
 
@@ -103,7 +157,10 @@ SSL/TLS Configuration:
 |-----------|---------------|
 | Apache2 | Selected as web server |
 | Nginx | Selected as web server |
-| Node.js 20.x | App type is Node.js |
+| Node.js 18/20/22.x | Any frontend framework or Node.js backend |
+| pnpm | Selected as package manager |
+| yarn | Selected as package manager |
+| bun | Selected as package manager |
 | Python 3 + venv | App type is Python |
 | PHP + PHP-FPM | App type is PHP |
 | PM2 | PM2 selected as process manager |
@@ -113,6 +170,19 @@ SSL/TLS Configuration:
 | Certbot | Let's Encrypt SSL selected |
 
 ## Generated Configurations
+
+### Frontend SPA (React, Vue, Angular, Static)
+- SPA routing (index.html fallback)
+- Immutable caching for hashed assets (1 year)
+- No-cache for HTML files
+- Compressed responses (gzip/brotli)
+- Security headers
+
+### Frontend SSR (Next.js, Nuxt.js, SvelteKit)
+- Reverse proxy to Node.js server
+- WebSocket support for HMR
+- PM2 cluster mode
+- Auto-restart on crash
 
 ### Apache2 Features
 - Reverse proxy with WebSocket support
@@ -129,17 +199,32 @@ SSL/TLS Configuration:
 - Static asset caching
 - HTTP/2 support for SSL
 
-### PM2 Ecosystem
-- Cluster mode for Node.js (multi-instance)
-- Auto-restart on crash
-- Memory limit restart (1GB default)
-- Log file configuration with timestamps
-- Startup script integration
+### PM2 Ecosystem for Frontend SSR
+```javascript
+// Next.js Standalone mode
+module.exports = {
+  apps: [{
+    name: 'myapp.com',
+    cwd: '/var/www/myapp.com/.next/standalone',
+    script: 'server.js',
+    instances: 'max',
+    exec_mode: 'cluster',
+    // ...
+  }]
+};
 
-### Systemd Service
-- Auto-restart on failure
-- Log integration with journald
-- Proper user isolation (www-data)
+// Nuxt.js SSR
+module.exports = {
+  apps: [{
+    name: 'myapp.com',
+    cwd: '/var/www/myapp.com',
+    script: '.output/server/index.mjs',
+    instances: 'max',
+    exec_mode: 'cluster',
+    // ...
+  }]
+};
+```
 
 ## Helper Scripts
 
@@ -170,21 +255,80 @@ sudo /var/www/example.com/restart.sh
 
 ## Examples
 
-### Example 1: Next.js with PM2
+### Example 1: Next.js SSR with PM2
 
 ```
 Web Server: Nginx
-App Type: Node.js
+App Type: Next.js
+Mode: SSR
+Node.js: 20 LTS
+Package Manager: pnpm
 Domain: myapp.com (with www)
 Port: 3000
 Git: https://github.com/user/myapp.git
 Process Manager: PM2
-Database: None
 Firewall: Yes
 SSL: Let's Encrypt
 ```
 
-### Example 2: FastAPI with Systemd
+### Example 2: React SPA (Vite) - Static Deployment
+
+```
+Web Server: Nginx
+App Type: React
+Build Tool: Vite
+Node.js: 20 LTS
+Package Manager: npm
+Domain: app.example.com
+Git: https://github.com/user/react-app.git
+Firewall: Yes
+SSL: Let's Encrypt
+```
+
+### Example 3: Nuxt.js Static Generation
+
+```
+Web Server: Nginx
+App Type: Nuxt.js
+Mode: Static
+Node.js: 20 LTS
+Package Manager: yarn
+Domain: blog.example.com
+Git: https://github.com/user/nuxt-blog.git
+Firewall: Yes
+SSL: Let's Encrypt
+```
+
+### Example 4: Vue.js SPA with Backend API
+
+```
+Web Server: Apache2
+App Type: Vue.js
+Build Tool: Vite
+Node.js: 20 LTS
+Package Manager: npm
+Domain: dashboard.example.com
+API URL: https://api.example.com
+Git: https://github.com/user/vue-dashboard.git
+Firewall: Yes
+SSL: Let's Encrypt
+```
+
+### Example 5: Angular Application
+
+```
+Web Server: Nginx
+App Type: Angular
+Project Name: my-angular-app
+Node.js: 20 LTS
+Package Manager: npm
+Domain: admin.example.com
+Git: https://github.com/user/angular-admin.git
+Firewall: Yes
+SSL: Let's Encrypt
+```
+
+### Example 6: FastAPI Backend
 
 ```
 Web Server: Apache2
@@ -198,29 +342,17 @@ Firewall: Yes
 SSL: Let's Encrypt
 ```
 
-### Example 3: Laravel with MySQL
-
-```
-Web Server: Nginx
-App Type: PHP
-Domain: blog.example.com
-Document Root: public
-Database: MySQL
-Firewall: Yes
-SSL: Let's Encrypt
-```
-
-### Example 4: Static Website
-
-```
-Web Server: Nginx
-App Type: Static
-Domain: docs.example.com
-Firewall: Yes
-SSL: Let's Encrypt
-```
-
 ## Post-Setup Tasks
+
+### For Frontend Applications
+```bash
+# Rebuild and redeploy
+cd /var/www/yourdomain.com
+pnpm run build  # or npm/yarn/bun
+
+# Restart (for SSR apps)
+pm2 restart your-app-name
+```
 
 ### For Python Applications
 ```bash
@@ -376,6 +508,17 @@ The script automatically backs up existing configurations to:
 - [ ] Don't expose .env files publicly
 
 ## Changelog
+
+### v3.0.0
+- **Frontend Framework Support**: Added support for Next.js, Nuxt.js, React, Vue.js, Angular, and Svelte
+- **Deployment Modes**: SSR, Static Export, and SPA modes for applicable frameworks
+- **Package Manager Selection**: Choose between npm, pnpm, yarn, or bun
+- **Node.js Version Selection**: 18, 20, or 22 LTS
+- **Build-time Environment Variables**: Configure during setup
+- **Optimized Caching**: Immutable caching for hashed assets, no-cache for HTML
+- **SPA Routing**: Proper fallback routing for single-page applications
+- **PM2 Configs**: Framework-specific PM2 configurations for SSR apps
+- **API URL Configuration**: Automatic environment setup for frontend-backend connections
 
 ### v2.0.0
 - Added Systemd as alternative to PM2

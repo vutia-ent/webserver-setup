@@ -1,14 +1,32 @@
 #!/bin/bash
 
 # ============================================================================
-# Universal Web Server Setup Script v2.0
+# Universal Web Server Setup Script v3.0
 # ============================================================================
 # A comprehensive, production-ready tool for setting up web applications with:
 # - Apache2 or Nginx (auto-install if missing)
 # - Reverse proxy configuration with WebSocket support
 # - Static file serving with caching
 # - SSL/TLS with Let's Encrypt, self-signed, or existing certificates
-# - Multiple app support (Node.js, Python, PHP, static)
+#
+# Backend support:
+# - Node.js (Express, NestJS, Fastify)
+# - Python (FastAPI, Django, Flask)
+# - PHP (Laravel, WordPress, Symfony)
+#
+# Frontend support (NEW in v3.0):
+# - Next.js (SSR, Static Export, Standalone)
+# - Nuxt.js (SSR, Static Generation, SPA)
+# - React (Vite, Create React App)
+# - Vue.js (Vite, Vue CLI)
+# - Angular (Angular CLI)
+# - Svelte/SvelteKit (SSR, Static, SPA)
+#
+# Features:
+# - Multiple package managers (npm, pnpm, yarn, bun)
+# - Node.js version selection (18, 20, 22 LTS)
+# - Optimized caching for hashed assets
+# - SPA routing support
 # - PM2 or systemd process management
 # - UFW firewall configuration
 # - Database installation (MySQL/PostgreSQL)
@@ -20,7 +38,7 @@
 #
 # ============================================================================
 
-VERSION="2.0.0"
+VERSION="3.0.0"
 
 # Exit on error, but handle gracefully
 set -o pipefail
@@ -108,9 +126,10 @@ print_header() {
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════════════════════════════╗"
     echo "║          Universal Web Server Setup v${VERSION}                        ║"
-    echo "║           Apache2 • Nginx • SSL • PM2 • Firewall                     ║"
+    echo "║     Apache2 • Nginx • SSL • PM2 • Frontend & Backend Deploy          ║"
     echo "╚══════════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
+    echo -e "${DIM}Supports: Next.js, Nuxt.js, React, Vue, Angular, Svelte, Node.js, Python, PHP${NC}"
     echo -e "${DIM}Log file: $LOG_FILE${NC}"
     echo ""
 }
@@ -230,26 +249,256 @@ select_web_server() {
 select_app_type() {
     echo ""
     echo -e "${BOLD}Select Application Type:${NC}"
-    echo -e "  1) Node.js  ${DIM}(Next.js, Express, NestJS, etc.)${NC}"
+    echo -e "  ${CYAN}── Backend ──${NC}"
+    echo -e "  1) Node.js  ${DIM}(Express, NestJS, Fastify, etc.)${NC}"
     echo -e "  2) Python   ${DIM}(FastAPI, Django, Flask)${NC}"
     echo -e "  3) PHP      ${DIM}(Laravel, WordPress, Symfony)${NC}"
-    echo -e "  4) Static   ${DIM}(HTML, CSS, JS, React build)${NC}"
-    echo -e "  5) Proxy    ${DIM}(reverse proxy to existing app)${NC}"
+    echo -e "  ${CYAN}── Frontend ──${NC}"
+    echo -e "  4) Next.js  ${DIM}(React SSR/SSG framework)${NC}"
+    echo -e "  5) Nuxt.js  ${DIM}(Vue SSR/SSG framework)${NC}"
+    echo -e "  6) React    ${DIM}(SPA - Vite, CRA)${NC}"
+    echo -e "  7) Vue.js   ${DIM}(SPA - Vite, Vue CLI)${NC}"
+    echo -e "  8) Angular  ${DIM}(SPA - Angular CLI)${NC}"
+    echo -e "  9) Svelte   ${DIM}(SPA/SSR - SvelteKit)${NC}"
+    echo -e "  ${CYAN}── Other ──${NC}"
+    echo -e "  10) Static  ${DIM}(pre-built HTML, CSS, JS)${NC}"
+    echo -e "  11) Proxy   ${DIM}(reverse proxy to existing app)${NC}"
     echo ""
 
     while true; do
-        read -p "Enter choice [1-5]: " choice
+        read -p "Enter choice [1-11]: " choice
         case $choice in
             1) APP_TYPE="nodejs"; break;;
             2) APP_TYPE="python"; break;;
             3) APP_TYPE="php"; break;;
-            4) APP_TYPE="static"; break;;
-            5) APP_TYPE="proxy"; break;;
-            *) echo "Invalid choice. Please enter 1-5.";;
+            4) APP_TYPE="nextjs"; break;;
+            5) APP_TYPE="nuxtjs"; break;;
+            6) APP_TYPE="react"; break;;
+            7) APP_TYPE="vue"; break;;
+            8) APP_TYPE="angular"; break;;
+            9) APP_TYPE="svelte"; break;;
+            10) APP_TYPE="static"; break;;
+            11) APP_TYPE="proxy"; break;;
+            *) echo "Invalid choice. Please enter 1-11.";;
         esac
     done
 
     log_info "Selected app type: $APP_TYPE"
+
+    # Get frontend-specific configuration
+    if [[ "$APP_TYPE" =~ ^(nextjs|nuxtjs|react|vue|angular|svelte)$ ]]; then
+        get_frontend_config
+    fi
+}
+
+# Get frontend-specific configuration
+get_frontend_config() {
+    echo ""
+    echo -e "${BOLD}Frontend Configuration:${NC}"
+
+    # Deployment mode based on framework
+    case $APP_TYPE in
+        nextjs)
+            echo ""
+            echo -e "${BOLD}Next.js Deployment Mode:${NC}"
+            echo -e "  1) SSR       ${DIM}(Server-Side Rendering - needs Node.js server)${NC}"
+            echo -e "  2) Static    ${DIM}(Static Export - output: 'export' in next.config.js)${NC}"
+            echo -e "  3) Standalone${DIM}(Self-contained server - output: 'standalone')${NC}"
+            echo ""
+            while true; do
+                read -p "Enter choice [1-3] [1]: " mode_choice
+                mode_choice=${mode_choice:-1}
+                case $mode_choice in
+                    1) FRONTEND_MODE="ssr"; break;;
+                    2) FRONTEND_MODE="static"; break;;
+                    3) FRONTEND_MODE="standalone"; break;;
+                    *) echo "Invalid choice.";;
+                esac
+            done
+            FRONTEND_BUILD_DIR=".next"
+            FRONTEND_STATIC_DIR="out"
+            FRONTEND_BUILD_CMD="npm run build"
+            FRONTEND_START_CMD="npm start"
+            ;;
+        nuxtjs)
+            echo ""
+            echo -e "${BOLD}Nuxt.js Deployment Mode:${NC}"
+            echo -e "  1) SSR       ${DIM}(Server-Side Rendering - universal mode)${NC}"
+            echo -e "  2) Static    ${DIM}(Static Generation - nuxt generate)${NC}"
+            echo -e "  3) SPA       ${DIM}(Single Page Application - ssr: false)${NC}"
+            echo ""
+            while true; do
+                read -p "Enter choice [1-3] [1]: " mode_choice
+                mode_choice=${mode_choice:-1}
+                case $mode_choice in
+                    1) FRONTEND_MODE="ssr"; break;;
+                    2) FRONTEND_MODE="static"; break;;
+                    3) FRONTEND_MODE="spa"; break;;
+                    *) echo "Invalid choice.";;
+                esac
+            done
+            FRONTEND_BUILD_DIR=".output"
+            FRONTEND_STATIC_DIR=".output/public"
+            if [ "$FRONTEND_MODE" == "static" ]; then
+                FRONTEND_BUILD_CMD="npm run generate"
+                FRONTEND_STATIC_DIR="dist"
+            else
+                FRONTEND_BUILD_CMD="npm run build"
+            fi
+            FRONTEND_START_CMD="node .output/server/index.mjs"
+            ;;
+        react)
+            FRONTEND_MODE="spa"
+            echo ""
+            echo -e "${BOLD}React Build Tool:${NC}"
+            echo -e "  1) Vite      ${DIM}(recommended, fast builds)${NC}"
+            echo -e "  2) CRA       ${DIM}(Create React App)${NC}"
+            echo ""
+            while true; do
+                read -p "Enter choice [1-2] [1]: " tool_choice
+                tool_choice=${tool_choice:-1}
+                case $tool_choice in
+                    1) FRONTEND_TOOL="vite"; FRONTEND_STATIC_DIR="dist"; break;;
+                    2) FRONTEND_TOOL="cra"; FRONTEND_STATIC_DIR="build"; break;;
+                    *) echo "Invalid choice.";;
+                esac
+            done
+            FRONTEND_BUILD_CMD="npm run build"
+            ;;
+        vue)
+            FRONTEND_MODE="spa"
+            echo ""
+            echo -e "${BOLD}Vue Build Tool:${NC}"
+            echo -e "  1) Vite      ${DIM}(recommended, fast builds)${NC}"
+            echo -e "  2) Vue CLI   ${DIM}(legacy)${NC}"
+            echo ""
+            while true; do
+                read -p "Enter choice [1-2] [1]: " tool_choice
+                tool_choice=${tool_choice:-1}
+                case $tool_choice in
+                    1) FRONTEND_TOOL="vite"; FRONTEND_STATIC_DIR="dist"; break;;
+                    2) FRONTEND_TOOL="cli"; FRONTEND_STATIC_DIR="dist"; break;;
+                    *) echo "Invalid choice.";;
+                esac
+            done
+            FRONTEND_BUILD_CMD="npm run build"
+            ;;
+        angular)
+            FRONTEND_MODE="spa"
+            FRONTEND_TOOL="angular-cli"
+            FRONTEND_BUILD_CMD="npm run build -- --configuration production"
+            echo ""
+            read -p "Enter Angular project name (for build output path) [app]: " ANGULAR_PROJECT
+            ANGULAR_PROJECT=${ANGULAR_PROJECT:-app}
+            FRONTEND_STATIC_DIR="dist/$ANGULAR_PROJECT/browser"
+            ;;
+        svelte)
+            echo ""
+            echo -e "${BOLD}Svelte Deployment Mode:${NC}"
+            echo -e "  1) SvelteKit SSR  ${DIM}(Server-Side Rendering)${NC}"
+            echo -e "  2) SvelteKit Static ${DIM}(adapter-static)${NC}"
+            echo -e "  3) Svelte SPA     ${DIM}(Vite only, no SvelteKit)${NC}"
+            echo ""
+            while true; do
+                read -p "Enter choice [1-3] [1]: " mode_choice
+                mode_choice=${mode_choice:-1}
+                case $mode_choice in
+                    1) FRONTEND_MODE="ssr"; break;;
+                    2) FRONTEND_MODE="static"; break;;
+                    3) FRONTEND_MODE="spa"; break;;
+                    *) echo "Invalid choice.";;
+                esac
+            done
+            FRONTEND_BUILD_DIR="build"
+            FRONTEND_STATIC_DIR="build"
+            FRONTEND_BUILD_CMD="npm run build"
+            FRONTEND_START_CMD="node build/index.js"
+            ;;
+    esac
+
+    log_info "Frontend mode: $FRONTEND_MODE"
+
+    # Node.js version selection
+    echo ""
+    echo -e "${BOLD}Node.js Version:${NC}"
+    echo -e "  1) Node.js 20 LTS ${DIM}(recommended)${NC}"
+    echo -e "  2) Node.js 22 LTS ${DIM}(latest LTS)${NC}"
+    echo -e "  3) Node.js 18 LTS ${DIM}(older LTS)${NC}"
+    echo ""
+    while true; do
+        read -p "Enter choice [1-3] [1]: " node_choice
+        node_choice=${node_choice:-1}
+        case $node_choice in
+            1) NODE_VERSION="20"; break;;
+            2) NODE_VERSION="22"; break;;
+            3) NODE_VERSION="18"; break;;
+            *) echo "Invalid choice.";;
+        esac
+    done
+    log_info "Node.js version: $NODE_VERSION"
+
+    # Package manager selection
+    echo ""
+    echo -e "${BOLD}Package Manager:${NC}"
+    echo -e "  1) npm   ${DIM}(default)${NC}"
+    echo -e "  2) pnpm  ${DIM}(fast, efficient)${NC}"
+    echo -e "  3) yarn  ${DIM}(classic)${NC}"
+    echo -e "  4) bun   ${DIM}(fastest, all-in-one)${NC}"
+    echo ""
+    while true; do
+        read -p "Enter choice [1-4] [1]: " pkg_choice
+        pkg_choice=${pkg_choice:-1}
+        case $pkg_choice in
+            1) PKG_MANAGER="npm"; break;;
+            2) PKG_MANAGER="pnpm"; break;;
+            3) PKG_MANAGER="yarn"; break;;
+            4) PKG_MANAGER="bun"; break;;
+            *) echo "Invalid choice.";;
+        esac
+    done
+    log_info "Package manager: $PKG_MANAGER"
+
+    # Update build commands based on package manager
+    case $PKG_MANAGER in
+        pnpm)
+            FRONTEND_BUILD_CMD="${FRONTEND_BUILD_CMD/npm/pnpm}"
+            FRONTEND_START_CMD="${FRONTEND_START_CMD/npm/pnpm}"
+            ;;
+        yarn)
+            FRONTEND_BUILD_CMD="${FRONTEND_BUILD_CMD/npm run/yarn}"
+            FRONTEND_START_CMD="${FRONTEND_START_CMD/npm/yarn}"
+            ;;
+        bun)
+            FRONTEND_BUILD_CMD="${FRONTEND_BUILD_CMD/npm/bun}"
+            FRONTEND_START_CMD="${FRONTEND_START_CMD/npm/bun}"
+            ;;
+    esac
+
+    # Environment variables for build
+    echo ""
+    read -p "Configure build-time environment variables? (y/n) [n]: " setup_env
+    setup_env=${setup_env:-n}
+    if [[ $setup_env =~ ^[Yy]$ ]]; then
+        FRONTEND_ENV_VARS=()
+        echo -e "${DIM}Enter environment variables (format: KEY=value), empty line to finish:${NC}"
+        while true; do
+            read -p "  > " env_var
+            if [ -z "$env_var" ]; then
+                break
+            fi
+            FRONTEND_ENV_VARS+=("$env_var")
+        done
+        if [ ${#FRONTEND_ENV_VARS[@]} -gt 0 ]; then
+            log_info "Configured ${#FRONTEND_ENV_VARS[@]} environment variable(s)"
+        fi
+    fi
+
+    # API URL configuration (common for frontends)
+    echo ""
+    read -p "Enter backend API URL (or leave empty): " FRONTEND_API_URL
+    if [ -n "$FRONTEND_API_URL" ]; then
+        log_info "API URL: $FRONTEND_API_URL"
+    fi
 }
 
 # Get domain configuration
@@ -330,11 +579,22 @@ get_port_config() {
     echo ""
     echo -e "${BOLD}Port Configuration:${NC}"
 
+    # Check if this is a static deployment (no reverse proxy needed)
     if [[ "$APP_TYPE" == "static" || "$APP_TYPE" == "php" ]]; then
         USE_PROXY=false
         APP_PORT=""
         log_info "No reverse proxy needed for $APP_TYPE"
         return
+    fi
+
+    # Frontend frameworks: check if it's static/SPA mode
+    if [[ "$APP_TYPE" =~ ^(nextjs|nuxtjs|react|vue|angular|svelte)$ ]]; then
+        if [[ "$FRONTEND_MODE" == "static" || "$FRONTEND_MODE" == "spa" ]]; then
+            USE_PROXY=false
+            APP_PORT=""
+            log_info "No reverse proxy needed for $APP_TYPE in $FRONTEND_MODE mode"
+            return
+        fi
     fi
 
     USE_PROXY=true
@@ -343,6 +603,9 @@ get_port_config() {
         nodejs) default_port=3000;;
         python) default_port=8000;;
         proxy) default_port=3000;;
+        nextjs) default_port=3000;;
+        nuxtjs) default_port=3000;;
+        svelte) default_port=3000;;
         *) default_port=3000;;
     esac
 
@@ -445,7 +708,22 @@ get_ssl_config() {
 
 # Get process manager config
 get_pm_config() {
-    if [[ "$APP_TYPE" != "nodejs" && "$APP_TYPE" != "python" ]]; then
+    # Skip for static/SPA apps and backends that don't need process management
+    local needs_pm=false
+
+    case $APP_TYPE in
+        nodejs|python)
+            needs_pm=true
+            ;;
+        nextjs|nuxtjs|svelte)
+            # Only SSR mode needs process management
+            if [[ "$FRONTEND_MODE" == "ssr" || "$FRONTEND_MODE" == "standalone" ]]; then
+                needs_pm=true
+            fi
+            ;;
+    esac
+
+    if [ "$needs_pm" = false ]; then
         USE_PM2=false
         USE_SYSTEMD=false
         return
@@ -478,6 +756,10 @@ get_pm_config() {
         if [ "$APP_TYPE" == "nodejs" ]; then
             read -p "Enter start command [npm start]: " START_CMD
             START_CMD=${START_CMD:-"npm start"}
+        elif [[ "$APP_TYPE" =~ ^(nextjs|nuxtjs|svelte)$ ]]; then
+            # Use the framework's start command
+            START_CMD="${FRONTEND_START_CMD:-npm start}"
+            log_info "Start command: $START_CMD"
         elif [ "$APP_TYPE" == "python" ]; then
             local default_cmd="uvicorn app.main:app --host 127.0.0.1 --port $APP_PORT"
             read -p "Enter start command [$default_cmd]: " START_CMD
@@ -620,22 +902,25 @@ install_nginx() {
 install_nodejs() {
     log_step "Setting up Node.js..."
 
+    # Use configured version or default to 20
+    local node_ver="${NODE_VERSION:-20}"
+
     if command_exists node; then
-        local node_version=$(node -v)
-        log_success "Node.js $node_version already installed"
+        local current_version=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
+        if [ "$current_version" == "$node_ver" ]; then
+            log_success "Node.js $(node -v) already installed"
+        else
+            log_info "Node.js $current_version installed, but $node_ver.x requested"
+            log_info "Installing Node.js ${node_ver}.x..."
+            install_node_version "$node_ver"
+        fi
     else
-        log_info "Installing Node.js 20.x..."
-
-        # Use NodeSource repository
-        mkdir -p /etc/apt/keyrings
-        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null
-        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
-
-        apt-get update >> "$LOG_FILE" 2>&1
-        install_package "nodejs"
-
-        log_success "Node.js $(node -v) installed"
+        log_info "Installing Node.js ${node_ver}.x..."
+        install_node_version "$node_ver"
     fi
+
+    # Install alternative package managers if needed
+    install_package_manager
 
     # Install PM2 if needed
     if [ "$USE_PM2" = true ]; then
@@ -647,6 +932,61 @@ install_nodejs() {
             log_success "PM2 already installed"
         fi
     fi
+}
+
+# Helper function to install specific Node.js version
+install_node_version() {
+    local version=$1
+
+    # Use NodeSource repository
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${version}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+
+    apt-get update >> "$LOG_FILE" 2>&1
+    apt-get install -y nodejs >> "$LOG_FILE" 2>&1
+
+    log_success "Node.js $(node -v) installed"
+}
+
+# Install alternative package managers (pnpm, yarn, bun)
+install_package_manager() {
+    case $PKG_MANAGER in
+        pnpm)
+            if ! command_exists pnpm; then
+                log_info "Installing pnpm..."
+                npm install -g pnpm >> "$LOG_FILE" 2>&1
+                log_success "pnpm installed"
+            else
+                log_success "pnpm already installed"
+            fi
+            ;;
+        yarn)
+            if ! command_exists yarn; then
+                log_info "Installing yarn..."
+                npm install -g yarn >> "$LOG_FILE" 2>&1
+                log_success "yarn installed"
+            else
+                log_success "yarn already installed"
+            fi
+            ;;
+        bun)
+            if ! command_exists bun; then
+                log_info "Installing bun..."
+                curl -fsSL https://bun.sh/install | bash >> "$LOG_FILE" 2>&1
+                # Add bun to path for current session
+                export BUN_INSTALL="$HOME/.bun"
+                export PATH="$BUN_INSTALL/bin:$PATH"
+                # Also install globally via npm as fallback
+                if ! command_exists bun; then
+                    npm install -g bun >> "$LOG_FILE" 2>&1 || log_warning "bun installation had issues"
+                fi
+                log_success "bun installed"
+            else
+                log_success "bun already installed"
+            fi
+            ;;
+    esac
 }
 
 # Install Python
@@ -899,6 +1239,215 @@ setup_python_app() {
     log_success "Python app configured"
 }
 
+# Setup Frontend application (Next.js, Nuxt.js, React, Vue, Angular, Svelte)
+setup_frontend_app() {
+    log_step "Setting up $APP_TYPE application..."
+
+    cd "$APP_ROOT"
+
+    # Create environment file with build-time variables
+    create_frontend_env_file
+
+    # Install dependencies based on package manager
+    if [ -f "package.json" ]; then
+        log_info "Installing dependencies with $PKG_MANAGER..."
+
+        case $PKG_MANAGER in
+            npm)
+                npm ci >> "$LOG_FILE" 2>&1 || npm install >> "$LOG_FILE" 2>&1 || log_warning "Dependency installation had issues"
+                ;;
+            pnpm)
+                pnpm install --frozen-lockfile >> "$LOG_FILE" 2>&1 || pnpm install >> "$LOG_FILE" 2>&1 || log_warning "Dependency installation had issues"
+                ;;
+            yarn)
+                yarn install --frozen-lockfile >> "$LOG_FILE" 2>&1 || yarn install >> "$LOG_FILE" 2>&1 || log_warning "Dependency installation had issues"
+                ;;
+            bun)
+                bun install --frozen-lockfile >> "$LOG_FILE" 2>&1 || bun install >> "$LOG_FILE" 2>&1 || log_warning "Dependency installation had issues"
+                ;;
+        esac
+
+        log_success "Dependencies installed"
+
+        # Build the application
+        log_info "Building $APP_TYPE application..."
+        log_info "Build command: $FRONTEND_BUILD_CMD"
+
+        # Set environment for build
+        export NODE_ENV=production
+
+        if $FRONTEND_BUILD_CMD >> "$LOG_FILE" 2>&1; then
+            log_success "$APP_TYPE build completed"
+        else
+            log_error "Build failed. Check $LOG_FILE for details"
+            return 1
+        fi
+
+        # Verify build output exists
+        verify_frontend_build
+
+    else
+        log_warning "No package.json found"
+    fi
+
+    chown -R www-data:www-data "$APP_ROOT"
+
+    log_success "$APP_TYPE application configured"
+}
+
+# Create frontend environment file
+create_frontend_env_file() {
+    local env_file=""
+
+    case $APP_TYPE in
+        nextjs)
+            env_file=".env.production"
+            ;;
+        nuxtjs)
+            env_file=".env"
+            ;;
+        react|vue|angular|svelte)
+            env_file=".env.production"
+            ;;
+    esac
+
+    # Only create if no env file exists
+    if [ -n "$env_file" ] && [ ! -f "$env_file" ]; then
+        log_info "Creating $env_file..."
+
+        # Start with basic config
+        cat > "$env_file" << EOF
+# Production environment
+NODE_ENV=production
+EOF
+
+        # Add port for SSR apps
+        if [[ "$FRONTEND_MODE" == "ssr" || "$FRONTEND_MODE" == "standalone" ]] && [ -n "$APP_PORT" ]; then
+            echo "PORT=$APP_PORT" >> "$env_file"
+        fi
+
+        # Add API URL if configured
+        if [ -n "$FRONTEND_API_URL" ]; then
+            case $APP_TYPE in
+                nextjs)
+                    echo "NEXT_PUBLIC_API_URL=$FRONTEND_API_URL" >> "$env_file"
+                    ;;
+                nuxtjs)
+                    echo "NUXT_PUBLIC_API_URL=$FRONTEND_API_URL" >> "$env_file"
+                    ;;
+                react)
+                    echo "VITE_API_URL=$FRONTEND_API_URL" >> "$env_file"
+                    echo "REACT_APP_API_URL=$FRONTEND_API_URL" >> "$env_file"
+                    ;;
+                vue)
+                    echo "VITE_API_URL=$FRONTEND_API_URL" >> "$env_file"
+                    echo "VUE_APP_API_URL=$FRONTEND_API_URL" >> "$env_file"
+                    ;;
+                angular)
+                    # Angular uses environment.ts files, but we can still set
+                    echo "API_URL=$FRONTEND_API_URL" >> "$env_file"
+                    ;;
+                svelte)
+                    echo "VITE_API_URL=$FRONTEND_API_URL" >> "$env_file"
+                    echo "PUBLIC_API_URL=$FRONTEND_API_URL" >> "$env_file"
+                    ;;
+            esac
+        fi
+
+        # Add custom environment variables
+        if [ -n "${FRONTEND_ENV_VARS+x}" ] && [ ${#FRONTEND_ENV_VARS[@]} -gt 0 ]; then
+            echo "" >> "$env_file"
+            echo "# Custom environment variables" >> "$env_file"
+            for var in "${FRONTEND_ENV_VARS[@]}"; do
+                echo "$var" >> "$env_file"
+            done
+        fi
+
+        log_success "Created $env_file"
+    fi
+}
+
+# Verify frontend build output
+verify_frontend_build() {
+    local build_ok=false
+
+    case $APP_TYPE in
+        nextjs)
+            if [ "$FRONTEND_MODE" == "static" ]; then
+                [ -d "$APP_ROOT/out" ] && build_ok=true
+            else
+                [ -d "$APP_ROOT/.next" ] && build_ok=true
+            fi
+            ;;
+        nuxtjs)
+            if [ "$FRONTEND_MODE" == "static" ]; then
+                [ -d "$APP_ROOT/dist" ] && build_ok=true
+            else
+                [ -d "$APP_ROOT/.output" ] && build_ok=true
+            fi
+            ;;
+        react)
+            [ -d "$APP_ROOT/$FRONTEND_STATIC_DIR" ] && build_ok=true
+            ;;
+        vue)
+            [ -d "$APP_ROOT/dist" ] && build_ok=true
+            ;;
+        angular)
+            [ -d "$APP_ROOT/$FRONTEND_STATIC_DIR" ] && build_ok=true
+            ;;
+        svelte)
+            [ -d "$APP_ROOT/build" ] && build_ok=true
+            ;;
+    esac
+
+    if [ "$build_ok" = true ]; then
+        log_success "Build output verified"
+    else
+        log_warning "Build output directory not found. Build may have failed."
+    fi
+}
+
+# Get frontend document root (for static/SPA deployments)
+get_frontend_doc_root() {
+    case $APP_TYPE in
+        nextjs)
+            if [ "$FRONTEND_MODE" == "static" ]; then
+                echo "$APP_ROOT/out"
+            else
+                echo "$APP_ROOT"
+            fi
+            ;;
+        nuxtjs)
+            if [ "$FRONTEND_MODE" == "static" ]; then
+                echo "$APP_ROOT/dist"
+            elif [ "$FRONTEND_MODE" == "spa" ]; then
+                echo "$APP_ROOT/.output/public"
+            else
+                echo "$APP_ROOT"
+            fi
+            ;;
+        react)
+            echo "$APP_ROOT/$FRONTEND_STATIC_DIR"
+            ;;
+        vue)
+            echo "$APP_ROOT/dist"
+            ;;
+        angular)
+            echo "$APP_ROOT/$FRONTEND_STATIC_DIR"
+            ;;
+        svelte)
+            if [ "$FRONTEND_MODE" == "static" ] || [ "$FRONTEND_MODE" == "spa" ]; then
+                echo "$APP_ROOT/build"
+            else
+                echo "$APP_ROOT"
+            fi
+            ;;
+        *)
+            echo "$APP_ROOT"
+            ;;
+    esac
+}
+
 # Setup PM2
 setup_pm2() {
     if [ "$USE_PM2" != true ]; then
@@ -925,6 +1474,122 @@ module.exports = {
     env: {
       NODE_ENV: 'production',
       PORT: $APP_PORT
+    },
+    instances: 'max',
+    exec_mode: 'cluster',
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '1G',
+    error_file: '/var/log/pm2/${PM2_APP_NAME}-error.log',
+    out_file: '/var/log/pm2/${PM2_APP_NAME}-out.log',
+    merge_logs: true,
+    time: true
+  }]
+};
+EOF
+    elif [ "$APP_TYPE" == "nextjs" ]; then
+        # Next.js SSR/Standalone configuration
+        if [ "$FRONTEND_MODE" == "standalone" ]; then
+            cat > ecosystem.config.js << EOF
+module.exports = {
+  apps: [{
+    name: '$PM2_APP_NAME',
+    cwd: '$APP_ROOT/.next/standalone',
+    script: 'server.js',
+    env: {
+      NODE_ENV: 'production',
+      PORT: $APP_PORT,
+      HOSTNAME: '127.0.0.1'
+    },
+    instances: 'max',
+    exec_mode: 'cluster',
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '1G',
+    error_file: '/var/log/pm2/${PM2_APP_NAME}-error.log',
+    out_file: '/var/log/pm2/${PM2_APP_NAME}-out.log',
+    merge_logs: true,
+    time: true
+  }]
+};
+EOF
+            # Copy static and public folders for standalone mode
+            if [ -d "$APP_ROOT/.next/static" ]; then
+                cp -r "$APP_ROOT/.next/static" "$APP_ROOT/.next/standalone/.next/" 2>/dev/null || true
+            fi
+            if [ -d "$APP_ROOT/public" ]; then
+                cp -r "$APP_ROOT/public" "$APP_ROOT/.next/standalone/" 2>/dev/null || true
+            fi
+        else
+            # Standard Next.js SSR
+            local pkg_cmd="npm"
+            [ "$PKG_MANAGER" == "pnpm" ] && pkg_cmd="pnpm"
+            [ "$PKG_MANAGER" == "yarn" ] && pkg_cmd="yarn"
+            [ "$PKG_MANAGER" == "bun" ] && pkg_cmd="bun"
+
+            cat > ecosystem.config.js << EOF
+module.exports = {
+  apps: [{
+    name: '$PM2_APP_NAME',
+    cwd: '$APP_ROOT',
+    script: '$pkg_cmd',
+    args: 'start',
+    env: {
+      NODE_ENV: 'production',
+      PORT: $APP_PORT
+    },
+    instances: 1,
+    exec_mode: 'fork',
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '1G',
+    error_file: '/var/log/pm2/${PM2_APP_NAME}-error.log',
+    out_file: '/var/log/pm2/${PM2_APP_NAME}-out.log',
+    merge_logs: true,
+    time: true
+  }]
+};
+EOF
+        fi
+    elif [ "$APP_TYPE" == "nuxtjs" ]; then
+        # Nuxt.js SSR configuration
+        cat > ecosystem.config.js << EOF
+module.exports = {
+  apps: [{
+    name: '$PM2_APP_NAME',
+    cwd: '$APP_ROOT',
+    script: '.output/server/index.mjs',
+    env: {
+      NODE_ENV: 'production',
+      PORT: $APP_PORT,
+      HOST: '127.0.0.1',
+      NITRO_PORT: $APP_PORT,
+      NITRO_HOST: '127.0.0.1'
+    },
+    instances: 'max',
+    exec_mode: 'cluster',
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '1G',
+    error_file: '/var/log/pm2/${PM2_APP_NAME}-error.log',
+    out_file: '/var/log/pm2/${PM2_APP_NAME}-out.log',
+    merge_logs: true,
+    time: true
+  }]
+};
+EOF
+    elif [ "$APP_TYPE" == "svelte" ] && [ "$FRONTEND_MODE" == "ssr" ]; then
+        # SvelteKit SSR configuration
+        cat > ecosystem.config.js << EOF
+module.exports = {
+  apps: [{
+    name: '$PM2_APP_NAME',
+    cwd: '$APP_ROOT',
+    script: 'build/index.js',
+    env: {
+      NODE_ENV: 'production',
+      PORT: $APP_PORT,
+      HOST: '127.0.0.1'
     },
     instances: 'max',
     exec_mode: 'cluster',
@@ -1076,8 +1741,14 @@ create_apache_config() {
         alias_line="    ServerAlias $SERVER_ALIASES"
     fi
 
+    # Determine document root for frontend static apps
+    local frontend_doc_root=""
+    if [[ "$APP_TYPE" =~ ^(nextjs|nuxtjs|react|vue|angular|svelte)$ ]] && [[ "$FRONTEND_MODE" == "static" || "$FRONTEND_MODE" == "spa" ]]; then
+        frontend_doc_root=$(get_frontend_doc_root)
+    fi
+
     if [ "$USE_PROXY" = true ]; then
-        # Reverse proxy configuration
+        # Reverse proxy configuration (for SSR apps and backend services)
         cat > "$config_file" << EOF
 <VirtualHost *:80>
     ServerName $DOMAIN
@@ -1104,6 +1775,89 @@ $alias_line
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
     # Logging
+    ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}_error.log
+    CustomLog \${APACHE_LOG_DIR}/${DOMAIN}_access.log combined
+</VirtualHost>
+EOF
+    elif [ -n "$frontend_doc_root" ]; then
+        # Frontend SPA/Static configuration with optimized caching
+        cat > "$config_file" << EOF
+<VirtualHost *:80>
+    ServerName $DOMAIN
+$alias_line
+
+    DocumentRoot $frontend_doc_root
+
+    <Directory $frontend_doc_root>
+        Options -Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
+
+        # SPA fallback - serve index.html for all routes
+        RewriteEngine On
+        RewriteBase /
+        RewriteRule ^index\.html\$ - [L]
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule . /index.html [L]
+    </Directory>
+
+    # Enable compression
+    <IfModule mod_deflate.c>
+        AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css application/javascript application/json image/svg+xml application/wasm
+    </IfModule>
+
+    # Cache static assets with hashed filenames (immutable)
+    <IfModule mod_expires.c>
+        ExpiresActive On
+
+        # HTML - no cache (SPA needs fresh HTML)
+        <FilesMatch "\.html\$">
+            ExpiresDefault "access plus 0 seconds"
+            Header set Cache-Control "no-cache, no-store, must-revalidate"
+        </FilesMatch>
+
+        # Hashed assets (JS, CSS with hash in filename) - cache forever
+        <FilesMatch "\.[a-f0-9]{8,}\.(js|css)\$">
+            ExpiresDefault "access plus 1 year"
+            Header set Cache-Control "public, max-age=31536000, immutable"
+        </FilesMatch>
+
+        # Regular JS/CSS without hash
+        <FilesMatch "\.(js|css)\$">
+            ExpiresDefault "access plus 1 month"
+            Header set Cache-Control "public, max-age=2592000"
+        </FilesMatch>
+
+        # Images and fonts
+        <FilesMatch "\.(jpg|jpeg|png|gif|ico|svg|webp|avif|woff|woff2|ttf|eot)\$">
+            ExpiresDefault "access plus 1 year"
+            Header set Cache-Control "public, max-age=31536000, immutable"
+        </FilesMatch>
+
+        # JSON and other data files
+        <FilesMatch "\.(json|xml)\$">
+            ExpiresDefault "access plus 1 hour"
+            Header set Cache-Control "public, max-age=3600"
+        </FilesMatch>
+    </IfModule>
+
+    # Security headers
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Hide sensitive files
+    <FilesMatch "^\.">
+        Require all denied
+    </FilesMatch>
+
+    # Block access to source maps in production (optional - remove if needed for debugging)
+    <FilesMatch "\.map\$">
+        Require all denied
+    </FilesMatch>
+
     ErrorLog \${APACHE_LOG_DIR}/${DOMAIN}_error.log
     CustomLog \${APACHE_LOG_DIR}/${DOMAIN}_access.log combined
 </VirtualHost>
@@ -1219,8 +1973,14 @@ create_nginx_config() {
         server_names="$DOMAIN $SERVER_ALIASES"
     fi
 
+    # Determine document root for frontend static apps
+    local frontend_doc_root=""
+    if [[ "$APP_TYPE" =~ ^(nextjs|nuxtjs|react|vue|angular|svelte)$ ]] && [[ "$FRONTEND_MODE" == "static" || "$FRONTEND_MODE" == "spa" ]]; then
+        frontend_doc_root=$(get_frontend_doc_root)
+    fi
+
     if [ "$USE_PROXY" = true ]; then
-        # Reverse proxy configuration
+        # Reverse proxy configuration (for SSR apps and backend services)
         cat > "$config_file" << EOF
 upstream ${DOMAIN//./_}_backend {
     server 127.0.0.1:$APP_PORT;
@@ -1258,7 +2018,82 @@ server {
     gzip_vary on;
     gzip_min_length 1024;
     gzip_proxied any;
-    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml application/wasm;
+
+    access_log /var/log/nginx/${DOMAIN}_access.log;
+    error_log /var/log/nginx/${DOMAIN}_error.log;
+}
+EOF
+    elif [ -n "$frontend_doc_root" ]; then
+        # Frontend SPA/Static configuration with optimized caching
+        cat > "$config_file" << EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $server_names;
+
+    root $frontend_doc_root;
+    index index.html;
+
+    # Security - hide sensitive files
+    location ~ /\. {
+        deny all;
+    }
+
+    # Block source maps in production
+    location ~* \.map\$ {
+        deny all;
+    }
+
+    # SPA fallback - serve index.html for all routes
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    # Cache hashed assets (immutable) - matches patterns like main.abc123.js
+    location ~* \.[a-f0-9]{8,}\.(js|css)\$ {
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        access_log off;
+    }
+
+    # Cache static assets (images, fonts)
+    location ~* \.(jpg|jpeg|png|gif|ico|svg|webp|avif|woff|woff2|ttf|eot)\$ {
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        access_log off;
+    }
+
+    # Cache regular JS/CSS (without hash)
+    location ~* \.(js|css)\$ {
+        expires 1M;
+        add_header Cache-Control "public, max-age=2592000";
+        access_log off;
+    }
+
+    # No cache for HTML (SPA needs fresh HTML)
+    location ~* \.html\$ {
+        expires -1;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    # Cache JSON and data files briefly
+    location ~* \.(json|xml)\$ {
+        expires 1h;
+        add_header Cache-Control "public, max-age=3600";
+    }
+
+    # Security headers
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml application/wasm;
 
     access_log /var/log/nginx/${DOMAIN}_access.log;
     error_log /var/log/nginx/${DOMAIN}_error.log;
@@ -1644,6 +2479,26 @@ pip install -r requirements.txt
 alembic upgrade head 2>/dev/null || true
 deactivate
 EOF
+    elif [[ "$APP_TYPE" =~ ^(nextjs|nuxtjs|react|vue|angular|svelte)$ ]]; then
+        # Frontend update script
+        local install_cmd=""
+        local build_cmd="$FRONTEND_BUILD_CMD"
+        case $PKG_MANAGER in
+            npm) install_cmd="npm ci || npm install";;
+            pnpm) install_cmd="pnpm install --frozen-lockfile || pnpm install";;
+            yarn) install_cmd="yarn install --frozen-lockfile || yarn install";;
+            bun) install_cmd="bun install --frozen-lockfile || bun install";;
+        esac
+
+        cat >> "$APP_ROOT/update.sh" << EOF
+# Update frontend dependencies
+export NODE_ENV=production
+$install_cmd
+
+# Build frontend
+echo "Building $APP_TYPE application..."
+$build_cmd
+EOF
     fi
 
     if [ "$USE_PM2" = true ]; then
@@ -1740,6 +2595,12 @@ print_summary() {
     [ -n "$SERVER_ALIASES" ] && echo "  Aliases:         $SERVER_ALIASES"
     echo "  Web Server:      $WEB_SERVER"
     echo "  App Type:        $APP_TYPE"
+    # Show frontend-specific config
+    if [[ "$APP_TYPE" =~ ^(nextjs|nuxtjs|react|vue|angular|svelte)$ ]]; then
+        echo "  Deploy Mode:     $FRONTEND_MODE"
+        echo "  Node.js:         v${NODE_VERSION}.x"
+        echo "  Pkg Manager:     $PKG_MANAGER"
+    fi
     echo "  App Directory:   $APP_ROOT"
     [ "$USE_PROXY" = true ] && echo "  App Port:        $APP_PORT"
     echo "  SSL:             $SSL_TYPE"
@@ -1789,6 +2650,28 @@ print_summary() {
         echo ""
     fi
 
+    # Frontend-specific notes
+    if [[ "$APP_TYPE" =~ ^(nextjs|nuxtjs|react|vue|angular|svelte)$ ]]; then
+        echo -e "${YELLOW}Frontend Deployment Notes:${NC}"
+        if [[ "$FRONTEND_MODE" == "ssr" || "$FRONTEND_MODE" == "standalone" ]]; then
+            echo "  Your $APP_TYPE app is running in SSR mode"
+            echo "  - Application is proxied through $WEB_SERVER"
+            if [ "$USE_PM2" = true ]; then
+                echo "  - Process managed by PM2"
+            fi
+        else
+            echo "  Your $APP_TYPE app is deployed as static files"
+            echo "  - Files served from: $(get_frontend_doc_root)"
+        fi
+        echo ""
+        echo -e "${BOLD}Rebuild & Redeploy:${NC}"
+        echo "  cd $APP_ROOT && $FRONTEND_BUILD_CMD"
+        if [[ "$FRONTEND_MODE" == "ssr" || "$FRONTEND_MODE" == "standalone" ]] && [ "$USE_PM2" = true ]; then
+            echo "  pm2 restart $PM2_APP_NAME"
+        fi
+        echo ""
+    fi
+
     if [ "$INSTALL_DATABASE" != "none" ]; then
         echo -e "${YELLOW}Database:${NC} $INSTALL_DATABASE is installed"
         if [ "$INSTALL_DATABASE" == "mysql" ]; then
@@ -1826,6 +2709,12 @@ main() {
     echo -e "${BOLD}Configuration Summary:${NC}"
     echo "  Web Server:    $WEB_SERVER"
     echo "  App Type:      $APP_TYPE"
+    # Show frontend-specific info
+    if [[ "$APP_TYPE" =~ ^(nextjs|nuxtjs|react|vue|angular|svelte)$ ]]; then
+        echo "  Mode:          $FRONTEND_MODE"
+        echo "  Node.js:       v${NODE_VERSION}.x"
+        echo "  Pkg Manager:   $PKG_MANAGER"
+    fi
     echo "  Domain:        $DOMAIN"
     echo "  Directory:     $APP_ROOT"
     [ "$USE_PROXY" = true ] && echo "  Port:          $APP_PORT"
@@ -1860,6 +2749,7 @@ main() {
         nodejs) install_nodejs;;
         python) install_python;;
         php) install_php;;
+        nextjs|nuxtjs|react|vue|angular|svelte) install_nodejs;;
     esac
 
     install_database
@@ -1871,6 +2761,7 @@ main() {
     case $APP_TYPE in
         nodejs) setup_nodejs_app;;
         python) setup_python_app;;
+        nextjs|nuxtjs|react|vue|angular|svelte) setup_frontend_app;;
     esac
 
     setup_pm2
